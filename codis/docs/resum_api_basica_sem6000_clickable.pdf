@@ -1,0 +1,284 @@
+%PDF-1.4
+%‚„œ”
+1 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+2 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>
+endobj
+3 0 obj
+<< /Length 3397 >>
+stream
+BT /F2 18 Tf 1 0 0 1 50 792.00 Tm (Resum de l'API basica de sem6000) Tj ET
+BT /F2 14 Tf 1 0 0 1 50 757.00 Tm (1. Introduccio) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 735.00 Tm (La llibreria sem6000 permet descobrir, connectar i controlar endolls Voltcraft) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 719.00 Tm (SEM6000 per Bluetooth, a mes de consultar dades de consum i configuracio.) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 698.00 Tm (En aquest projecte, la llibreria es troba a) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 682.00 Tm (r:\\Codis\\github2\\python3-voltcraft-sem6000. Per fer servir discover\(\) cal tenir) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 666.00 Tm (Bluetooth actiu i permisos suficients.) Tj ET
+BT /F2 14 Tf 1 0 0 1 50 645.00 Tm (2. Patro d'importacio local) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 623.00 Tm (El patro recomanat es afegir el repositori local al sys.path abans d'importar el) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 607.00 Tm (modul principal. Aixo evita haver d'instal.lar la llibreria globalment.) Tj ET
+BT /F1 10 Tf 1 0 0 1 50 586.00 Tm (from pathlib import Path) Tj ET
+BT /F1 10 Tf 1 0 0 1 50 572.00 Tm (import sys) Tj ET
+BT /F1 10 Tf 1 0 0 1 50 554.00 Tm (PROJECT_ROOT = Path\(__file__\).resolve\(\).parents[1]) Tj ET
+BT /F1 10 Tf 1 0 0 1 50 540.00 Tm (LIBRARY_ROOT = PROJECT_ROOT / "github2" / "python3-voltcraft-sem6000") Tj ET
+BT /F1 10 Tf 1 0 0 1 50 526.00 Tm (if str\(LIBRARY_ROOT\) not in sys.path:) Tj ET
+BT /F1 10 Tf 1 0 0 1 50 512.00 Tm (sys.path.insert\(0, str\(LIBRARY_ROOT\)\)) Tj ET
+BT /F1 10 Tf 1 0 0 1 50 494.00 Tm (from sem6000 import sem6000) Tj ET
+BT /F2 14 Tf 1 0 0 1 50 475.00 Tm (3. Index de funcions) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 453.00 Tm (Fes clic en qualsevol entrada per anar directament a l'apartat de la funcio.) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 432.00 Tm (-  SEM6000.discover\(timeout=5, bluetooth_device='hci0'\)) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 416.00 Tm (-  SEM6000\(deviceAddr=None, pin=None, bluetooth_device='hci0', timeout=5,) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 400.00 Tm (  debug=False\)) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 384.00 Tm (-  connect\(device_address\)) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 368.00 Tm (-  authorize\(pin\)) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 352.00 Tm (-  request_device_name\(\)) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 336.00 Tm (-  power_on\(\)) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 320.00 Tm (-  power_off\(\)) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 304.00 Tm (-  request_measurement\(\)) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 288.00 Tm (-  request_settings\(\)) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 272.00 Tm (-  disconnect\(\)) Tj ET
+BT /F2 14 Tf 1 0 0 1 50 251.00 Tm (4. Funcions principals) Tj ET
+BT /F2 12 Tf 1 0 0 1 50 229.00 Tm (SEM6000.discover\(timeout=5, bluetooth_device='hci0'\)) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 211.00 Tm (-  Que fa: Escaneja l'entorn Bluetooth i retorna una llista de dispositius) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 195.00 Tm (  compatibles amb el servei del SEM6000.) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 174.00 Tm (-  Parametres:) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 153.00 Tm (-  timeout: segons d'espera per detectar dispositius.) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 132.00 Tm (-  bluetooth_device: interface Bluetooth a utilitzar, habitualment hci0.) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 111.00 Tm (-  Que retorna: Retorna una llista de diccionaris amb claus com name i address.) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 90.00 Tm (-  Exemple minim:) Tj ET
+BT /F1 10 Tf 1 0 0 1 50 69.00 Tm (devices = sem6000.SEM6000.discover\(\)) Tj ET
+endstream
+endobj
+4 0 obj
+<< /Length 3401 >>
+stream
+BT /F1 10 Tf 1 0 0 1 50 792.00 Tm (for device in devices:) Tj ET
+BT /F1 10 Tf 1 0 0 1 50 778.00 Tm (print\(device['name'], device['address']\)) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 759.00 Tm (-  Errors o observacions importants: Pot requerir permisos elevats segons el) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 743.00 Tm (  sistema. Si no hi ha cap dispositiu visible, la llista pot ser buida.) Tj ET
+BT /F2 12 Tf 1 0 0 1 50 722.00 Tm (SEM6000\(deviceAddr=None, pin=None, bluetooth_device='hci0', timeout=5, debug=False\)) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 704.00 Tm (-  Que fa: Crea el client principal. Si passes deviceAddr, intenta connectar de) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 688.00 Tm (  seguida. Si tambe passes pin, intenta autoritzar-se.) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 667.00 Tm (-  Parametres:) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 646.00 Tm (-  deviceAddr: MAC del dispositiu, per exemple 00:11:22:33:44:55.) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 625.00 Tm (-  pin: PIN de 4 digits, per exemple 0000.) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 604.00 Tm (-  bluetooth_device: interface Bluetooth.) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 583.00 Tm (-  timeout: temps maxim d'espera per resposta.) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 562.00 Tm (-  debug: si es True, escriu informacio de depuracio a stderr.) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 541.00 Tm (-  Que retorna: Retorna una instancia de la classe SEM6000.) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 520.00 Tm (-  Exemple minim:) Tj ET
+BT /F1 10 Tf 1 0 0 1 50 499.00 Tm (device = sem6000.SEM6000\('00:11:22:33:44:55', pin='0000', debug=True\)) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 480.00 Tm (-  Errors o observacions importants: Si la connexio o l'autoritzacio fallen, es) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 464.00 Tm (  llancara una excepcio.) Tj ET
+BT /F2 12 Tf 1 0 0 1 50 443.00 Tm (connect\(device_address\)) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 425.00 Tm (-  Que fa: Connecta el client actual a una MAC concreta.) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 404.00 Tm (-  Parametres:) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 383.00 Tm (-  device_address: adreca MAC del dispositiu que vols obrir.) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 362.00 Tm (-  Que retorna: Retorna el resultat intern de la reconnexio si tot va be.) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 341.00 Tm (-  Exemple minim:) Tj ET
+BT /F1 10 Tf 1 0 0 1 50 320.00 Tm (device = sem6000.SEM6000\(\)) Tj ET
+BT /F1 10 Tf 1 0 0 1 50 306.00 Tm (device.connect\('00:11:22:33:44:55'\)) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 287.00 Tm (-  Errors o observacions importants: No autoritza per si sol. Despres cal cridar) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 271.00 Tm (  authorize\(pin\) si cal.) Tj ET
+BT /F2 12 Tf 1 0 0 1 50 250.00 Tm (authorize\(pin\)) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 232.00 Tm (-  Que fa: Envia el PIN al dispositiu connectat i valida l'acces.) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 211.00 Tm (-  Parametres:) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 190.00 Tm (-  pin: codi de 4 digits del dispositiu.) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 169.00 Tm (-  Que retorna: Retorna un AuthorizedNotification si l'autenticacio te exit.) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 148.00 Tm (-  Exemple minim:) Tj ET
+BT /F1 10 Tf 1 0 0 1 50 127.00 Tm (device.authorize\('0000'\)) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 108.00 Tm (-  Errors o observacions importants: Si el PIN es incorrecte o el dispositiu no) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 92.00 Tm (  respon, es llanca una excepcio d'autenticacio.) Tj ET
+BT /F2 12 Tf 1 0 0 1 50 71.00 Tm (request_device_name\(\)) Tj ET
+endstream
+endobj
+5 0 obj
+<< /Length 3015 >>
+stream
+BT /F1 11 Tf 1 0 0 1 50 792.00 Tm (-  Que fa: Llegeix el nom configurat al dispositiu remot.) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 771.00 Tm (-  Parametres:) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 750.00 Tm (-  Sense parametres.) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 729.00 Tm (-  Que retorna: Retorna un DeviceNameRequestedNotification amb la propietat) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 713.00 Tm (  device_name.) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 692.00 Tm (-  Exemple minim:) Tj ET
+BT /F1 10 Tf 1 0 0 1 50 671.00 Tm (name_info = device.request_device_name\(\)) Tj ET
+BT /F1 10 Tf 1 0 0 1 50 657.00 Tm (print\(name_info.device_name\)) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 638.00 Tm (-  Errors o observacions importants: Serveix per identificar el dispositiu sense) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 622.00 Tm (  canviar-ne l'estat.) Tj ET
+BT /F2 12 Tf 1 0 0 1 50 601.00 Tm (power_on\(\)) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 583.00 Tm (-  Que fa: Activa el rele i dona pas de corrent a la sortida de l'endoll.) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 562.00 Tm (-  Parametres:) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 541.00 Tm (-  Sense parametres.) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 520.00 Tm (-  Que retorna: Retorna un PowerSwitchedNotification si el canvi te exit.) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 499.00 Tm (-  Exemple minim:) Tj ET
+BT /F1 10 Tf 1 0 0 1 50 478.00 Tm (device.power_on\(\)) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 459.00 Tm (-  Errors o observacions importants: Llanca una excepcio si el dispositiu rebutja) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 443.00 Tm (  l'ordre.) Tj ET
+BT /F2 12 Tf 1 0 0 1 50 422.00 Tm (power_off\(\)) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 404.00 Tm (-  Que fa: Desactiva el rele i talla el corrent a la sortida.) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 383.00 Tm (-  Parametres:) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 362.00 Tm (-  Sense parametres.) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 341.00 Tm (-  Que retorna: Retorna un PowerSwitchedNotification si el canvi te exit.) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 320.00 Tm (-  Exemple minim:) Tj ET
+BT /F1 10 Tf 1 0 0 1 50 299.00 Tm (device.power_off\(\)) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 280.00 Tm (-  Errors o observacions importants: Es l'equivalent de power_on\(\), pero per) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 264.00 Tm (  apagar l'endoll.) Tj ET
+BT /F2 12 Tf 1 0 0 1 50 243.00 Tm (request_measurement\(\)) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 225.00 Tm (-  Que fa: Demana els valors electrics actuals: consum, tensio, corrent,) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 209.00 Tm (  frequencia i consum total acumulat.) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 188.00 Tm (-  Parametres:) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 167.00 Tm (-  Sense parametres.) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 146.00 Tm (-  Que retorna: Retorna un MeasurementRequestedNotification, no un diccionari.) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 125.00 Tm (-  Exemple minim:) Tj ET
+BT /F1 10 Tf 1 0 0 1 50 104.00 Tm (measurement = device.request_measurement\(\)) Tj ET
+BT /F1 10 Tf 1 0 0 1 50 90.00 Tm (print\(measurement.power_in_milliwatt\)) Tj ET
+BT /F1 10 Tf 1 0 0 1 50 76.00 Tm (print\(measurement.voltage_in_volt\)) Tj ET
+endstream
+endobj
+6 0 obj
+<< /Length 3327 >>
+stream
+BT /F1 11 Tf 1 0 0 1 50 792.00 Tm (-  Errors o observacions importants: Les dades venen en atributs de l'objecte) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 776.00 Tm (  retornat, com power_in_milliwatt o total_consumption_in_kilowatt_hour.) Tj ET
+BT /F2 12 Tf 1 0 0 1 50 755.00 Tm (request_settings\(\)) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 737.00 Tm (-  Que fa: Consulta la configuracio activa del dispositiu: limit de potencia,) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 721.00 Tm (  preus i franja reduida.) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 700.00 Tm (-  Parametres:) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 679.00 Tm (-  Sense parametres.) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 658.00 Tm (-  Que retorna: Retorna un SettingsRequestedNotification.) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 637.00 Tm (-  Exemple minim:) Tj ET
+BT /F1 10 Tf 1 0 0 1 50 616.00 Tm (settings = device.request_settings\(\)) Tj ET
+BT /F1 10 Tf 1 0 0 1 50 602.00 Tm (print\(settings.power_limit_in_watt\)) Tj ET
+BT /F1 10 Tf 1 0 0 1 50 588.00 Tm (print\(settings.normal_price_in_cent\)) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 569.00 Tm (-  Errors o observacions importants: Igual que amb request_measurement\(\), el) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 553.00 Tm (  resultat es un objecte amb atributs, no una estructura JSON.) Tj ET
+BT /F2 12 Tf 1 0 0 1 50 532.00 Tm (disconnect\(\)) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 514.00 Tm (-  Que fa: Tanca la connexio Bluetooth amb el dispositiu actual.) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 493.00 Tm (-  Parametres:) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 472.00 Tm (-  Sense parametres.) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 451.00 Tm (-  Que retorna: Retorna True si la desconnexio s'executa correctament.) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 430.00 Tm (-  Exemple minim:) Tj ET
+BT /F1 10 Tf 1 0 0 1 50 409.00 Tm (device.disconnect\(\)) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 390.00 Tm (-  Errors o observacions importants: Es recomanable cridar-lo al final per deixar) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 374.00 Tm (  la connexio neta.) Tj ET
+BT /F2 14 Tf 1 0 0 1 50 353.00 Tm (5. Exemples d'us) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 331.00 Tm (Exemple 1: descobrir dispositius disponibles.) Tj ET
+BT /F1 10 Tf 1 0 0 1 50 310.00 Tm (devices = sem6000.SEM6000.discover\(\)) Tj ET
+BT /F1 10 Tf 1 0 0 1 50 296.00 Tm (for device in devices:) Tj ET
+BT /F1 10 Tf 1 0 0 1 50 282.00 Tm (print\(f"{device['name']}\\t{device['address']}"\)) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 263.00 Tm (Exemple 2: connectar-se, autoritzar, llegir nom i una mesura.) Tj ET
+BT /F1 10 Tf 1 0 0 1 50 242.00 Tm (device = sem6000.SEM6000\(\)) Tj ET
+BT /F1 10 Tf 1 0 0 1 50 228.00 Tm (device.connect\('00:11:22:33:44:55'\)) Tj ET
+BT /F1 10 Tf 1 0 0 1 50 214.00 Tm (device.authorize\('0000'\)) Tj ET
+BT /F1 10 Tf 1 0 0 1 50 200.00 Tm (name_info = device.request_device_name\(\)) Tj ET
+BT /F1 10 Tf 1 0 0 1 50 186.00 Tm (measurement = device.request_measurement\(\)) Tj ET
+BT /F1 10 Tf 1 0 0 1 50 172.00 Tm (print\(name_info.device_name\)) Tj ET
+BT /F1 10 Tf 1 0 0 1 50 158.00 Tm (print\(measurement.power_in_milliwatt\)) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 139.00 Tm (Exemple 3: encendre, apagar i desconnectar.) Tj ET
+BT /F1 10 Tf 1 0 0 1 50 118.00 Tm (device.power_on\(\)) Tj ET
+BT /F1 10 Tf 1 0 0 1 50 104.00 Tm (device.power_off\(\)) Tj ET
+BT /F1 10 Tf 1 0 0 1 50 90.00 Tm (device.disconnect\(\)) Tj ET
+BT /F2 14 Tf 1 0 0 1 50 71.00 Tm (6. Notes practiques i limitacions) Tj ET
+endstream
+endobj
+7 0 obj
+<< /Length 664 >>
+stream
+BT /F1 11 Tf 1 0 0 1 50 792.00 Tm (-  discover\(\) necessita acces Bluetooth i pot requerir permisos elevats segons) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 776.00 Tm (  l'entorn.) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 755.00 Tm (-  authorize\(\) falla si el PIN no es correcte o si el dispositiu no respon.) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 734.00 Tm (-  request_measurement\(\) i request_settings\(\) retornen objectes de notificacio,) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 718.00 Tm (  no diccionaris.) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 697.00 Tm (-  Aquest patro d'us assumeix que el dispositiu trobat es compatible amb la) Tj ET
+BT /F1 11 Tf 1 0 0 1 50 681.00 Tm (  llibreria SEM6000.) Tj ET
+endstream
+endobj
+8 0 obj
+<< /Type /Page /Parent 24 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 1 0 R /F2 2 0 R >> >> /Contents 3 0 R /Annots [13 0 R 14 0 R 15 0 R 16 0 R 17 0 R 18 0 R 19 0 R 20 0 R 21 0 R 22 0 R 23 0 R] >>
+endobj
+9 0 obj
+<< /Type /Page /Parent 24 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 1 0 R /F2 2 0 R >> >> /Contents 4 0 R >>
+endobj
+10 0 obj
+<< /Type /Page /Parent 24 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 1 0 R /F2 2 0 R >> >> /Contents 5 0 R >>
+endobj
+11 0 obj
+<< /Type /Page /Parent 24 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 1 0 R /F2 2 0 R >> >> /Contents 6 0 R >>
+endobj
+12 0 obj
+<< /Type /Page /Parent 24 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 1 0 R /F2 2 0 R >> >> /Contents 7 0 R >>
+endobj
+13 0 obj
+<< /Type /Annot /Subtype /Link /Border [0 0 0] /Rect [50.00 430.00 382.75 443.00] /A << /S /GoTo /D [8 0 R /XYZ 50.00 241.00 null] >> >>
+endobj
+14 0 obj
+<< /Type /Annot /Subtype /Link /Border [0 0 0] /Rect [50.00 414.00 491.65 427.00] /A << /S /GoTo /D [9 0 R /XYZ 50.00 734.00 null] >> >>
+endobj
+15 0 obj
+<< /Type /Annot /Subtype /Link /Border [0 0 0] /Rect [50.00 398.00 134.70 411.00] /A << /S /GoTo /D [9 0 R /XYZ 50.00 734.00 null] >> >>
+endobj
+16 0 obj
+<< /Type /Annot /Subtype /Link /Border [0 0 0] /Rect [50.00 382.00 207.30 395.00] /A << /S /GoTo /D [9 0 R /XYZ 50.00 455.00 null] >> >>
+endobj
+17 0 obj
+<< /Type /Annot /Subtype /Link /Border [0 0 0] /Rect [50.00 366.00 152.85 379.00] /A << /S /GoTo /D [9 0 R /XYZ 50.00 262.00 null] >> >>
+endobj
+18 0 obj
+<< /Type /Annot /Subtype /Link /Border [0 0 0] /Rect [50.00 350.00 195.20 363.00] /A << /S /GoTo /D [9 0 R /XYZ 50.00 83.00 null] >> >>
+endobj
+19 0 obj
+<< /Type /Annot /Subtype /Link /Border [0 0 0] /Rect [50.00 334.00 128.65 347.00] /A << /S /GoTo /D [10 0 R /XYZ 50.00 613.00 null] >> >>
+endobj
+20 0 obj
+<< /Type /Annot /Subtype /Link /Border [0 0 0] /Rect [50.00 318.00 134.70 331.00] /A << /S /GoTo /D [10 0 R /XYZ 50.00 434.00 null] >> >>
+endobj
+21 0 obj
+<< /Type /Annot /Subtype /Link /Border [0 0 0] /Rect [50.00 302.00 195.20 315.00] /A << /S /GoTo /D [10 0 R /XYZ 50.00 255.00 null] >> >>
+endobj
+22 0 obj
+<< /Type /Annot /Subtype /Link /Border [0 0 0] /Rect [50.00 286.00 177.05 299.00] /A << /S /GoTo /D [11 0 R /XYZ 50.00 767.00 null] >> >>
+endobj
+23 0 obj
+<< /Type /Annot /Subtype /Link /Border [0 0 0] /Rect [50.00 270.00 140.75 283.00] /A << /S /GoTo /D [11 0 R /XYZ 50.00 544.00 null] >> >>
+endobj
+24 0 obj
+<< /Type /Pages /Count 5 /Kids [8 0 R 9 0 R 10 0 R 11 0 R 12 0 R] >>
+endobj
+25 0 obj
+<< /Type /Catalog /Pages 24 0 R >>
+endobj
+xref
+0 26
+0000000000 65535 f 
+0000000015 00000 n 
+0000000112 00000 n 
+0000000214 00000 n 
+0000003662 00000 n 
+0000007114 00000 n 
+0000010180 00000 n 
+0000013558 00000 n 
+0000014272 00000 n 
+0000014496 00000 n 
+0000014633 00000 n 
+0000014771 00000 n 
+0000014909 00000 n 
+0000015047 00000 n 
+0000015200 00000 n 
+0000015353 00000 n 
+0000015506 00000 n 
+0000015659 00000 n 
+0000015812 00000 n 
+0000015964 00000 n 
+0000016118 00000 n 
+0000016272 00000 n 
+0000016426 00000 n 
+0000016580 00000 n 
+0000016734 00000 n 
+0000016819 00000 n 
+trailer
+<< /Size 26 /Root 25 0 R >>
+startxref
+16870
+%%EOF
