@@ -174,6 +174,630 @@ def should_include_extended_measurements(
     return bool(getattr(measurement, "is_power_active", False))
 
 
+def _normalize_isotime_minutes(value: Any, *, field_name: str) -> str:
+    """Valida una hora ISO i la retorna sempre amb precisio de minuts."""
+    if value is None or value == "":
+        raise CommandError(
+            f"Falta el camp {field_name}.",
+            code="invalid_params",
+        )
+    try:
+        parsed = dt.time.fromisoformat(str(value).strip())
+    except ValueError as exc:
+        raise CommandError(
+            f"Valor invalid per {field_name}: {value}. Usa HH:MM o HH:MM:SS.",
+            code="invalid_params",
+        ) from exc
+    return parsed.isoformat(timespec="minutes")
+
+
+def _normalize_isodatetime_seconds(value: Any, *, field_name: str) -> str:
+    """Valida una data-hora ISO i la retorna sempre amb precisio de segons."""
+    if value is None or value == "":
+        raise CommandError(
+            f"Falta el camp {field_name}.",
+            code="invalid_params",
+        )
+    try:
+        parsed = dt.datetime.fromisoformat(str(value).strip())
+    except ValueError as exc:
+        raise CommandError(
+            f"Valor invalid per {field_name}: {value}. Usa YYYY-MM-DDTHH:MM[:SS].",
+            code="invalid_params",
+        ) from exc
+    return parsed.isoformat(timespec="seconds")
+
+
+def _normalize_positive_int(value: Any, *, field_name: str, allow_zero: bool = False) -> int:
+    """Valida enters provinents de params RPC i n'assegura el rang."""
+    if value is None or value == "":
+        raise CommandError(
+            f"Falta el camp {field_name}.",
+            code="invalid_params",
+        )
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as exc:
+        raise CommandError(
+            f"Valor invalid per {field_name}: {value}.",
+            code="invalid_params",
+        ) from exc
+    minimum = 0 if allow_zero else 1
+    if parsed < minimum:
+        comparator = ">=" if allow_zero else ">"
+        threshold = 0 if allow_zero else 0
+        raise CommandError(
+            f"El camp {field_name} ha de ser {comparator} {threshold}.",
+            code="invalid_params",
+        )
+    return parsed
+
+
+def _require_dict_params(params: Any, *, method_name: str) -> Dict[str, Any]:
+    """Assegura que una RPC que necessita camps nomenats rebi un objecte JSON."""
+    if not isinstance(params, dict):
+        raise CommandError(
+            f"El metode {method_name} necessita un objecte JSON als params.",
+            code="invalid_params",
+        )
+    return params
+
+
+def _canonical_weekday_from_value(value: Any) -> Optional[str]:
+    """Mapeja dies de la setmana de diverses formes a abreviatures canoniques."""
+    token = value
+    if hasattr(value, "name"):
+        token = getattr(value, "name")
+
+    normalized = str(token).strip().lower()
+    if normalized.startswith("weekday."):
+        normalized = normalized.split(".", 1)[1]
+
+    weekday_map = {
+        "0": "Sun",
+        "sun": "Sun",
+        "sunday": "Sun",
+        "1": "Mon",
+        "mon": "Mon",
+        "monday": "Mon",
+        "2": "Tue",
+        "tue": "Tue",
+        "tuesday": "Tue",
+        "3": "Wed",
+        "wed": "Wed",
+        "wednesday": "Wed",
+        "4": "Thu",
+        "thu": "Thu",
+        "thursday": "Thu",
+        "5": "Fri",
+        "fri": "Fri",
+        "friday": "Fri",
+        "6": "Sat",
+        "sat": "Sat",
+        "saturday": "Sat",
+    }
+    return weekday_map.get(normalized)
+
+
+def _format_weekdays(values: Any) -> str:
+    """Converteix una llista de weekdays del backend a una string canònica."""
+    if values is None:
+        return ""
+
+    formatted: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        canonical = _canonical_weekday_from_value(value)
+        if canonical is None or canonical in seen:
+            continue
+        formatted.append(canonical)
+        seen.add(canonical)
+    return ",".join(formatted)
+
+
+def _normalize_weekdays_string(value: Any, *, field_name: str) -> str:
+    """Valida una llista de weekdays i la retorna com a string canonica."""
+    if value is None or value == "":
+        raise CommandError(
+            f"Falta el camp {field_name}.",
+            code="invalid_params",
+        )
+
+    if isinstance(value, str):
+        raw_values = [chunk.strip() for chunk in value.split(",")]
+    elif isinstance(value, list):
+        raw_values = value
+    else:
+        raise CommandError(
+            f"Valor invalid per {field_name}: {value}. Usa una string com Mon,Wed,Fri.",
+            code="invalid_params",
+        )
+
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for raw_value in raw_values:
+        canonical = _canonical_weekday_from_value(raw_value)
+        if canonical is None:
+            raise CommandError(
+                f"Valor invalid per {field_name}: {raw_value}. Usa dies com Mon,Wed,Fri.",
+                code="invalid_params",
+            )
+        if canonical in seen:
+            continue
+        normalized.append(canonical)
+        seen.add(canonical)
+
+    if not normalized:
+        raise CommandError(
+            f"Falta almenys un dia valid a {field_name}.",
+            code="invalid_params",
+        )
+    return ",".join(normalized)
+
+
+def _normalize_action_label(value: Any, *, field_name: str) -> str:
+    """Normalitza una accio d'endoll a on/off."""
+    if isinstance(value, bool):
+        return "on" if value else "off"
+
+    normalized = str(value or "").strip().lower()
+    if normalized in {"on", "true", "1"}:
+        return "on"
+    if normalized in {"off", "false", "0"}:
+        return "off"
+    raise CommandError(
+        f"Valor invalid per {field_name}: {value}. Usa on o off.",
+        code="invalid_params",
+    )
+
+
+def _action_label_to_bool(action_label: str) -> bool:
+    """Converteix l'etiqueta canonica on/off a boolea."""
+    return action_label == "on"
+
+
+def _action_bool_to_label(is_on: Any) -> str:
+    """Converteix un boolea o equivalent del backend a on/off."""
+    return "on" if bool(is_on) else "off"
+
+
+def normalize_settings_notification(settings: Any) -> Dict[str, Any]:
+    """Converteix els settings del SEM6000 en un payload estable per a RPC."""
+    return {
+        "night_mode": bool(getattr(settings, "is_nightmode_active", False)),
+        "power_limit_w": int(getattr(settings, "power_limit_in_watt", 0)),
+        "prices": {
+            "normal_price_cent": int(getattr(settings, "normal_price_in_cent", 0)),
+            "reduced_price_cent": int(
+                getattr(settings, "reduced_period_price_in_cent", 0)
+            ),
+        },
+        "reduced_period": {
+            "enabled": bool(getattr(settings, "is_reduced_period", False)),
+            "start": str(getattr(settings, "reduced_period_start_isotime", "00:00")),
+            "end": str(getattr(settings, "reduced_period_end_isotime", "00:00")),
+        },
+    }
+
+
+def flatten_settings_attributes(settings_payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Aplana settings per publicar-los com a atributs de ThingsBoard."""
+    prices = settings_payload.get("prices", {})
+    reduced_period = settings_payload.get("reduced_period", {})
+    return {
+        "night_mode": settings_payload.get("night_mode"),
+        "power_limit_w": settings_payload.get("power_limit_w"),
+        "price_normal_cent": prices.get("normal_price_cent"),
+        "price_reduced_cent": prices.get("reduced_price_cent"),
+        "reduced_period_enabled": reduced_period.get("enabled"),
+        "reduced_period_start": reduced_period.get("start"),
+        "reduced_period_end": reduced_period.get("end"),
+    }
+
+
+def normalize_timer_status_notification(notification: Any) -> Dict[str, Any]:
+    """Converteix l'estat del timer del SEM6000 en un payload estable per a RPC."""
+    target = getattr(notification, "target_isodatetime", None)
+    payload: Dict[str, Any] = {
+        "timer_active": bool(getattr(notification, "is_active", False)),
+        "action": _action_bool_to_label(getattr(notification, "is_action_turn_on", False)),
+        "target_isodatetime": None,
+        "original_timer_length_seconds": int(
+            getattr(notification, "original_timer_length_in_seconds", 0)
+        ),
+    }
+    if target not in {None, ""}:
+        payload["target_isodatetime"] = _normalize_isodatetime_seconds(
+            target,
+            field_name="target_isodatetime",
+        )
+    return payload
+
+
+def flatten_timer_attributes(timer_payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Aplana l'estat del timer per publicar-lo com a atributs."""
+    return {
+        "timer_active": timer_payload.get("timer_active"),
+        "timer_action": timer_payload.get("action"),
+        "timer_target_isodatetime": timer_payload.get("target_isodatetime"),
+        "timer_original_length_seconds": timer_payload.get(
+            "original_timer_length_seconds"
+        ),
+    }
+
+
+def normalize_random_mode_notification(notification: Any) -> Dict[str, Any]:
+    """Converteix l'estat de random mode en un payload estable per a RPC."""
+    return {
+        "enabled": bool(getattr(notification, "is_active", False)),
+        "weekdays": _format_weekdays(getattr(notification, "active_on_weekdays", [])),
+        "start": _normalize_isotime_minutes(
+            getattr(notification, "start_isotime", "00:00"),
+            field_name="start",
+        ),
+        "end": _normalize_isotime_minutes(
+            getattr(notification, "end_isotime", "00:00"),
+            field_name="end",
+        ),
+    }
+
+
+def flatten_random_mode_attributes(random_mode_payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Aplana l'estat de random mode per publicar-lo com a atributs."""
+    return {
+        "random_mode_enabled": random_mode_payload.get("enabled"),
+        "random_mode_weekdays": random_mode_payload.get("weekdays"),
+        "random_mode_start": random_mode_payload.get("start"),
+        "random_mode_end": random_mode_payload.get("end"),
+    }
+
+
+def _sem6000_message_payload_length(
+    raw_message: bytes,
+    hardware_version: Optional[int],
+) -> Optional[int]:
+    """Calcula la mida declarada pel propi missatge BLE del SEM6000."""
+    if len(raw_message) < 4 or raw_message[0:1] != b"\x0f":
+        return None
+
+    payload_length = raw_message[1]
+    # En HW v3 la lectura instantania declara 2 bytes menys dels reals.
+    if raw_message[2:4] == b"\x04\x00" and hardware_version == 3:
+        payload_length += 2
+    return payload_length
+
+
+def _sem6000_message_has_valid_checksum(
+    raw_message: bytes,
+    hardware_version: Optional[int],
+) -> bool:
+    """Valida el checksum del missatge segons la longitud declarada."""
+    payload_length = _sem6000_message_payload_length(raw_message, hardware_version)
+    if payload_length is None:
+        return False
+
+    payload_end = 2 + payload_length
+    if len(raw_message) < payload_end:
+        return False
+
+    payload = raw_message[2 : payload_end - 1]
+    checksum_received = raw_message[payload_end - 1]
+    checksum_actual = (1 + sum(payload)) & 0xFF
+    return checksum_received == checksum_actual
+
+
+def sem6000_raw_notifications_complete(
+    raw_notifications: Any,
+    hardware_version: Optional[int],
+) -> bool:
+    """Decideix si la resposta BLE acumulada ja te tots els bytes necessaris.
+
+    La llibreria base donava per complet un missatge nomes perque l'ultim fragment
+    acabava amb ``ff ff``. Això és fragile per a respostes llargues com els historics
+    de consum, on algun fragment intermedi pot acabar en aquests mateixos bytes.
+    Aqui fem servir la longitud anunciada pel missatge per validar que realment
+    hem rebut tot el payload abans d'intentar parsejar-lo.
+    """
+    if not raw_notifications:
+        return False
+
+    joined = b"".join(
+        bytes(chunk) for chunk in raw_notifications if isinstance(chunk, (bytes, bytearray))
+    )
+    if len(joined) < 4 or joined[0:1] != b"\x0f":
+        return False
+
+    payload_length = _sem6000_message_payload_length(joined, hardware_version)
+    if payload_length is None:
+        return False
+
+    payload_end = 2 + payload_length
+    if len(joined) < payload_end:
+        return False
+
+    if not _sem6000_message_has_valid_checksum(joined, hardware_version):
+        return False
+
+    command = joined[2:4]
+
+    # La lectura instantania no porta sufix ff ff.
+    if command == b"\x04\x00":
+        return True
+
+    # En HW >= 3, settings porta ff ff 00 00 al final.
+    if hardware_version is not None and hardware_version >= 3 and command == b"\x10\x00":
+        return len(joined) >= payload_end + 4 and joined[payload_end : payload_end + 4] == b"\xff\xff\x00\x00"
+
+    return len(joined) >= payload_end + 2 and joined[payload_end : payload_end + 2] == b"\xff\xff"
+
+
+def wait_for_sem6000_notifications(
+    wait_for_notifications: Callable[[float], bool],
+    delegate: Any,
+    timeout_seconds: float,
+) -> None:
+    """Espera notificacions BLE evitant tallar massa aviat respostes fragmentades.
+
+    La llibreria original deixa d'esperar a la primera finestra ``timeout`` sense
+    noves notificacions, encara que ja s'hagi rebut una resposta parcial. Per als
+    historics llargs aixÃ² pot deixar el missatge incomplet i acabar en checksum
+    invalid. Aqui, un cop hi ha fragments parcials, seguim fent polling curt fins
+    que el missatge sigui valid o s'esgoti una gracia addicional.
+    """
+    timeout = max(float(timeout_seconds or 0.0), 0.1)
+    partial_poll_seconds = min(max(timeout / 5.0, 0.2), 1.0)
+    partial_grace_seconds = max(timeout * 3.0, timeout + 2.0)
+    partial_deadline: Optional[float] = None
+
+    while True:
+        if delegate.has_final_raw_notification():
+            return
+
+        raw_notifications = getattr(delegate, "_raw_notifications", [])
+        has_partial = bool(raw_notifications)
+
+        wait_timeout = timeout
+        if has_partial:
+            if partial_deadline is None:
+                partial_deadline = time.monotonic() + partial_grace_seconds
+            remaining = partial_deadline - time.monotonic()
+            if remaining <= 0:
+                return
+            wait_timeout = min(partial_poll_seconds, remaining)
+
+        if not wait_for_notifications(wait_timeout):
+            if has_partial:
+                continue
+            return
+
+        if getattr(delegate, "_raw_notifications", []):
+            partial_deadline = time.monotonic() + partial_grace_seconds
+
+
+def _normalize_bool_field(
+    params_dict: Dict[str, Any],
+    *,
+    field_name: str,
+    aliases: tuple[str, ...] = (),
+) -> bool:
+    """Extreu un camp boolea obligatori admetent diversos aliases habituals."""
+    for candidate in (field_name, *aliases):
+        if candidate not in params_dict:
+            continue
+        parsed = parse_boolean_value(params_dict.get(candidate))
+        if parsed is None:
+            raise CommandError(
+                f"El camp {candidate} ha de ser boolea.",
+                code="invalid_params",
+            )
+        return parsed
+    raise CommandError(
+        f"Falta el camp {field_name}.",
+        code="invalid_params",
+    )
+
+
+def _normalize_action_field(
+    params_dict: Dict[str, Any],
+    *,
+    field_name: str = "action",
+    aliases: tuple[str, ...] = ("turn_on", "is_action_turn_on"),
+) -> str:
+    """Extreu l'accio on/off d'un payload RPC admetent text o booleans."""
+    for candidate in (field_name, *aliases):
+        if candidate not in params_dict:
+            continue
+        raw_value = params_dict.get(candidate)
+        if candidate == field_name:
+            return _normalize_action_label(raw_value, field_name=candidate)
+
+        parsed = parse_boolean_value(raw_value)
+        if parsed is None:
+            raise CommandError(
+                f"El camp {candidate} ha de ser boolea.",
+                code="invalid_params",
+            )
+        return _action_bool_to_label(parsed)
+
+    raise CommandError(
+        f"Falta el camp {field_name}.",
+        code="invalid_params",
+    )
+
+
+def _normalize_scheduler_type(value: Any, *, field_name: str = "type") -> str:
+    """Normalitza el tipus de scheduler a onetime o repeated."""
+    normalized = str(value or "").strip().lower().replace("-", "").replace("_", "")
+    scheduler_type_map = {
+        "onetime": "onetime",
+        "once": "onetime",
+        "repeated": "repeated",
+        "repeat": "repeated",
+        "recurring": "repeated",
+    }
+    scheduler_type = scheduler_type_map.get(normalized)
+    if scheduler_type is None:
+        raise CommandError(
+            f"Valor invalid per {field_name}: {value}. Usa onetime o repeated.",
+            code="invalid_params",
+        )
+    return scheduler_type
+
+
+def _normalize_slot_id(value: Any, *, field_name: str = "slot_id") -> int:
+    """Valida un slot de scheduler; la llibreria base admet el 0 com a primer slot."""
+    return _normalize_positive_int(value, field_name=field_name, allow_zero=True)
+
+
+def normalize_scheduler_entry(entry: Any) -> Dict[str, Any]:
+    """Converteix una entrada de scheduler del backend a un payload RPC estable."""
+    scheduler = getattr(entry, "scheduler", None)
+    weekdays = _format_weekdays(getattr(scheduler, "repeat_on_weekdays", []))
+    target_isodatetime = _normalize_isodatetime_seconds(
+        getattr(scheduler, "isodatetime", None),
+        field_name="target_isodatetime",
+    )
+    payload: Dict[str, Any] = {
+        "slot_id": int(getattr(entry, "slot_id", 0)),
+        "type": "repeated" if weekdays else "onetime",
+        "enabled": bool(getattr(scheduler, "is_active", False)),
+        "action": _action_bool_to_label(getattr(scheduler, "is_action_turn_on", False)),
+    }
+
+    if weekdays:
+        target_dt = dt.datetime.fromisoformat(target_isodatetime)
+        payload["weekdays"] = weekdays
+        payload["time"] = target_dt.time().isoformat(timespec="minutes")
+    else:
+        payload["target_isodatetime"] = target_isodatetime
+
+    return payload
+
+
+def normalize_scheduler_notification(notification: Any) -> Dict[str, Any]:
+    """Converteix la resposta de scheduler del SEM6000 a una llista ordenada."""
+    scheduler_entries = [
+        normalize_scheduler_entry(entry)
+        for entry in getattr(notification, "scheduler_entries", [])
+    ]
+    scheduler_entries.sort(key=lambda entry: entry["slot_id"])
+    return {
+        "scheduler_count": len(scheduler_entries),
+        "schedulers": scheduler_entries,
+    }
+
+
+def _normalize_optional_int(value: Any) -> Optional[int]:
+    """Converteix enters de la llibreria a int, preservant None."""
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _year_month_months_ago(reference_date: dt.date, months_ago: int) -> tuple[int, int]:
+    """Retorna any i mes absoluts per a una distancia en mesos."""
+    month_index = reference_date.year * 12 + (reference_date.month - 1) - months_ago
+    return month_index // 12, (month_index % 12) + 1
+
+
+def normalize_consumption_23h_notification(
+    notification: Any,
+    *,
+    now: Optional[dt.datetime] = None,
+) -> Dict[str, Any]:
+    """Normalitza l'historic horari amb etiquetes absolutes d'hora local."""
+    reference = (now or dt.datetime.now()).replace(minute=0, second=0, microsecond=0)
+    samples: list[Dict[str, Any]] = []
+    for hours_ago, value in enumerate(
+        getattr(notification, "consumption_n_hours_ago_in_watt_hour", [])
+    ):
+        sample_dt = reference - dt.timedelta(hours=hours_ago)
+        samples.append(
+            {
+                "hours_ago": hours_ago,
+                "timestamp_local": sample_dt.isoformat(timespec="seconds"),
+                "isotime": sample_dt.time().isoformat(timespec="minutes"),
+                "consumption_wh": _normalize_optional_int(value),
+            }
+        )
+    return {
+        "interval": "hour",
+        "unit": "Wh",
+        "sample_count": len(samples),
+        "samples": samples,
+    }
+
+
+def normalize_consumption_30d_notification(
+    notification: Any,
+    *,
+    today: Optional[dt.date] = None,
+) -> Dict[str, Any]:
+    """Normalitza l'historic diari amb dates absolutes."""
+    reference_date = today or dt.date.today()
+    samples: list[Dict[str, Any]] = []
+    for days_ago, value in enumerate(
+        getattr(notification, "consumption_n_days_ago_in_watt_hour", [])
+    ):
+        sample_date = reference_date - dt.timedelta(days=days_ago)
+        samples.append(
+            {
+                "days_ago": days_ago,
+                "date": sample_date.isoformat(),
+                "consumption_wh": _normalize_optional_int(value),
+            }
+        )
+    return {
+        "interval": "day",
+        "unit": "Wh",
+        "sample_count": len(samples),
+        "samples": samples,
+    }
+
+
+def normalize_consumption_12m_notification(
+    notification: Any,
+    *,
+    today: Optional[dt.date] = None,
+) -> Dict[str, Any]:
+    """Normalitza l'historic mensual amb claus any-mes absolutes."""
+    reference_date = today or dt.date.today()
+    samples: list[Dict[str, Any]] = []
+    for months_ago, value in enumerate(
+        getattr(notification, "consumption_n_months_ago_in_watt_hour", [])
+    ):
+        year, month = _year_month_months_ago(reference_date, months_ago)
+        samples.append(
+            {
+                "months_ago": months_ago,
+                "year": year,
+                "month": month,
+                "year_month": f"{year:04d}-{month:02d}",
+                "consumption_wh": _normalize_optional_int(value),
+            }
+        )
+    return {
+        "interval": "month",
+        "unit": "Wh",
+        "sample_count": len(samples),
+        "samples": samples,
+    }
+
+
+def _normalize_pin(value: Any, *, field_name: str) -> str:
+    """Valida un PIN numeric de 4 digits per a operacions administratives."""
+    pin = str(value or "").strip()
+    if len(pin) != 4 or not pin.isdigit():
+        raise CommandError(
+            f"Valor invalid per {field_name}: {value}. Usa un PIN numeric de 4 digits.",
+            code="invalid_params",
+        )
+    return pin
+
+
 class CommandError(Exception):
     """Error funcional retornable a ThingsBoard amb un codi controlat."""
 
@@ -473,6 +1097,34 @@ class Sem6000Session:
         self._is_connected = False
         self._last_operation_ms: Optional[float] = None
 
+    def _patch_sem6000_delegate(self, sem_module: Any) -> None:
+        """Aplica pegats per fer mes robust el transport BLE de la llibreria base."""
+        delegate_cls = getattr(getattr(sem_module, "sem6000", None), "SEM6000Delegate", None)
+        sem_cls = getattr(getattr(sem_module, "sem6000", None), "SEM6000", None)
+
+        if delegate_cls is not None and not getattr(
+            delegate_cls, "_codis_completion_patch_applied", False
+        ):
+            def _patched_has_final_raw_notification(delegate_self: Any) -> bool:
+                return sem6000_raw_notifications_complete(
+                    getattr(delegate_self, "_raw_notifications", []),
+                    getattr(delegate_self, "hardware_version", None),
+                )
+
+            delegate_cls.has_final_raw_notification = _patched_has_final_raw_notification
+            delegate_cls._codis_completion_patch_applied = True
+
+        if sem_cls is not None and not getattr(sem_cls, "_codis_wait_patch_applied", False):
+            def _patched_wait_for_notifications(device_self: Any) -> None:
+                wait_for_sem6000_notifications(
+                    getattr(device_self._bluetooth_lowenergy_interface, "wait_for_notifications"),
+                    getattr(device_self, "_delegate"),
+                    float(getattr(device_self, "timeout", self._timeout_seconds)),
+                )
+
+            sem_cls._wait_for_notifications = _patched_wait_for_notifications
+            sem_cls._codis_wait_patch_applied = True
+
     def _import_sem6000_module(self) -> Any:
         if self._sem6000_module is not None:
             return self._sem6000_module
@@ -483,6 +1135,7 @@ class Sem6000Session:
                 f"No s'ha pogut importar usa_sem6000: {exc}",
                 code="ble_dependency_error",
             ) from exc
+        self._patch_sem6000_delegate(sem_module)
         self._sem6000_module = sem_module
         return sem_module
 
@@ -569,6 +1222,234 @@ class Sem6000Session:
             "sync_time",
             lambda device: device.change_date_and_time(iso_datetime),
         )
+
+    def request_settings(self) -> Any:
+        return self._run_ble(
+            "request_settings",
+            lambda device: device.request_settings(),
+        )
+
+    def set_night_mode(self, enabled: bool) -> None:
+        if enabled:
+            self._run_ble("nightmode_on", lambda device: device.nightmode_on())
+        else:
+            self._run_ble("nightmode_off", lambda device: device.nightmode_off())
+
+    def set_power_limit(self, power_limit_w: int) -> None:
+        self._run_ble(
+            "set_power_limit",
+            lambda device: device.change_power_limit(power_limit_w),
+        )
+
+    def set_prices(self, normal_price_cent: int, reduced_price_cent: int) -> None:
+        self._run_ble(
+            "set_prices",
+            lambda device: device.change_prices(
+                normal_price_cent,
+                reduced_price_cent,
+            ),
+        )
+
+    def set_reduced_period(self, enabled: bool, start_isotime: str, end_isotime: str) -> None:
+        self._run_ble(
+            "set_reduced_period",
+            lambda device: device.change_reduced_period(
+                enabled,
+                start_isotime,
+                end_isotime,
+            ),
+        )
+
+    def request_device_name(self) -> Any:
+        return self._run_ble(
+            "request_device_name",
+            lambda device: device.request_device_name(),
+        )
+
+    def change_device_name(self, device_name: str) -> None:
+        self._run_ble(
+            "change_device_name",
+            lambda device: device.change_device_name(device_name),
+        )
+
+    def request_device_serial(self) -> Any:
+        return self._run_ble(
+            "request_device_serial",
+            lambda device: device.request_device_serial(),
+        )
+
+    def request_timer_status(self) -> Any:
+        return self._run_ble(
+            "request_timer_status",
+            lambda device: device.request_timer_status(),
+        )
+
+    def activate_timer_at(self, turn_on: bool, target_isodatetime: str) -> None:
+        self._run_ble(
+            "activate_timer_at",
+            lambda device: device.activate_timer_at(turn_on, target_isodatetime),
+        )
+
+    def reset_timer(self) -> None:
+        self._run_ble(
+            "reset_timer",
+            lambda device: device.reset_timer(),
+        )
+
+    def request_random_mode_status(self) -> Any:
+        return self._run_ble(
+            "request_random_mode_status",
+            lambda device: device.request_random_mode_status(),
+        )
+
+    def change_random_mode(self, weekdays: str, start_isotime: str, end_isotime: str) -> None:
+        self._run_ble(
+            "change_random_mode",
+            lambda device: device.change_random_mode(
+                weekdays,
+                start_isotime,
+                end_isotime,
+            ),
+        )
+
+    def reset_random_mode(self) -> None:
+        self._run_ble(
+            "reset_random_mode",
+            lambda device: device.reset_random_mode(),
+        )
+
+    def request_scheduler(self) -> Any:
+        return self._run_ble(
+            "request_scheduler",
+            lambda device: device.request_scheduler(),
+        )
+
+    def add_onetime_scheduler(
+        self,
+        enabled: bool,
+        turn_on: bool,
+        target_isodatetime: str,
+    ) -> None:
+        self._run_ble(
+            "add_onetime_scheduler",
+            lambda device: device.add_onetime_scheduler(
+                enabled,
+                turn_on,
+                target_isodatetime,
+            ),
+        )
+
+    def edit_onetime_scheduler(
+        self,
+        slot_id: int,
+        enabled: bool,
+        turn_on: bool,
+        target_isodatetime: str,
+    ) -> None:
+        self._run_ble(
+            "edit_onetime_scheduler",
+            lambda device: device.edit_onetime_scheduler(
+                slot_id,
+                enabled,
+                turn_on,
+                target_isodatetime,
+            ),
+        )
+
+    def add_repeated_scheduler(
+        self,
+        enabled: bool,
+        turn_on: bool,
+        weekdays: str,
+        isotime: str,
+    ) -> None:
+        self._run_ble(
+            "add_repeated_scheduler",
+            lambda device: device.add_repeated_scheduler(
+                enabled,
+                turn_on,
+                weekdays,
+                isotime,
+            ),
+        )
+
+    def edit_repeated_scheduler(
+        self,
+        slot_id: int,
+        enabled: bool,
+        turn_on: bool,
+        weekdays: str,
+        isotime: str,
+    ) -> None:
+        self._run_ble(
+            "edit_repeated_scheduler",
+            lambda device: device.edit_repeated_scheduler(
+                slot_id,
+                enabled,
+                turn_on,
+                weekdays,
+                isotime,
+            ),
+        )
+
+    def remove_scheduler(self, slot_id: int) -> None:
+        self._run_ble(
+            "remove_scheduler",
+            lambda device: device.remove_scheduler(slot_id),
+        )
+
+    def request_consumption_of_last_23_hours(self) -> Any:
+        return self._run_ble(
+            "request_consumption_of_last_23_hours",
+            lambda device: device.request_consumption_of_last_23_hours(),
+        )
+
+    def request_consumption_of_last_30_days(self) -> Any:
+        return self._run_ble(
+            "request_consumption_of_last_30_days",
+            lambda device: device.request_consumption_of_last_30_days(),
+        )
+
+    def request_consumption_of_last_12_months(self) -> Any:
+        return self._run_ble(
+            "request_consumption_of_last_12_months",
+            lambda device: device.request_consumption_of_last_12_months(),
+        )
+
+    def reset_consumption(self) -> None:
+        self._run_ble(
+            "reset_consumption",
+            lambda device: device.reset_consumption(),
+        )
+
+    def change_pin(self, new_pin: str) -> None:
+        self._run_ble(
+            "change_pin",
+            lambda device: device.change_pin(new_pin),
+        )
+        with self._lock:
+            self._pin = new_pin
+            if self._device is not None and hasattr(self._device, "pin"):
+                self._device.pin = new_pin
+
+    def reset_pin(self) -> None:
+        self._run_ble(
+            "reset_pin",
+            lambda device: device.reset_pin(),
+        )
+        with self._lock:
+            self._pin = "0000"
+            if self._device is not None and hasattr(self._device, "pin"):
+                self._device.pin = "0000"
+
+    def factory_reset(self) -> None:
+        self._run_ble(
+            "factory_reset",
+            lambda device: device.factory_reset(),
+        )
+        with self._lock:
+            self._pin = "0000"
+            self._disconnect_locked()
 
     def last_operation_ms(self) -> Optional[float]:
         with self._lock:
@@ -807,27 +1688,437 @@ class MeasurementHandler:
         )
 
 
-class ScheduleHandler:
-    """Punt d'extensio reservat per futures funcions de programacio."""
+class ConfigurationHandler:
+    """Gestiona la lectura i mutacio dels settings del SEM6000."""
 
-    methods = ("getScheduler", "addScheduler", "editScheduler", "removeScheduler")
+    methods = (
+        "getSettings",
+        "setNightMode",
+        "setPowerLimit",
+        "setPrices",
+        "setReducedPeriod",
+    )
 
     def handle(self, method_name: str, params: Any, context: CommandContext) -> Dict[str, Any]:
+        method_key = normalize_method(method_name)
+
+        if method_key == "getsettings":
+            settings_payload = normalize_settings_notification(context.sem.request_settings())
+            context.attributes.publish(flatten_settings_attributes(settings_payload))
+            return settings_payload
+
+        if method_key == "setnightmode":
+            enabled = parse_boolean_value(params)
+            if enabled is None and isinstance(params, dict):
+                enabled = parse_boolean_value(params.get("enabled"))
+            if enabled is None:
+                raise CommandError(
+                    "El metode necessita un parametre boolea 'enabled'.",
+                    code="invalid_params",
+                )
+            context.sem.set_night_mode(enabled)
+            response = {"night_mode": enabled}
+            context.attributes.publish(response)
+            return response
+
+        if method_key == "setpowerlimit":
+            raw_value = params.get("power_limit_w") if isinstance(params, dict) else params
+            power_limit_w = _normalize_positive_int(raw_value, field_name="power_limit_w")
+            context.sem.set_power_limit(power_limit_w)
+            response = {"power_limit_w": power_limit_w}
+            context.attributes.publish(response)
+            return response
+
+        if method_key == "setprices":
+            params_dict = _require_dict_params(params, method_name=method_name)
+            normal_price_cent = _normalize_positive_int(
+                params_dict.get("normal_price_cent"),
+                field_name="normal_price_cent",
+                allow_zero=True,
+            )
+            reduced_price_cent = _normalize_positive_int(
+                params_dict.get("reduced_price_cent"),
+                field_name="reduced_price_cent",
+                allow_zero=True,
+            )
+            context.sem.set_prices(normal_price_cent, reduced_price_cent)
+            response = {
+                "prices": {
+                    "normal_price_cent": normal_price_cent,
+                    "reduced_price_cent": reduced_price_cent,
+                }
+            }
+            context.attributes.publish(
+                {
+                    "price_normal_cent": normal_price_cent,
+                    "price_reduced_cent": reduced_price_cent,
+                }
+            )
+            return response
+
+        if method_key == "setreducedperiod":
+            params_dict = _require_dict_params(params, method_name=method_name)
+            enabled = parse_boolean_value(params_dict.get("enabled"))
+            if enabled is None:
+                raise CommandError(
+                    "El camp enabled ha de ser boolea.",
+                    code="invalid_params",
+                )
+            start_isotime = _normalize_isotime_minutes(
+                params_dict.get("start"),
+                field_name="start",
+            )
+            end_isotime = _normalize_isotime_minutes(
+                params_dict.get("end"),
+                field_name="end",
+            )
+            context.sem.set_reduced_period(enabled, start_isotime, end_isotime)
+            response = {
+                "reduced_period": {
+                    "enabled": enabled,
+                    "start": start_isotime,
+                    "end": end_isotime,
+                }
+            }
+            context.attributes.publish(
+                {
+                    "reduced_period_enabled": enabled,
+                    "reduced_period_start": start_isotime,
+                    "reduced_period_end": end_isotime,
+                }
+            )
+            return response
+
         raise CommandError(
-            f"Metode pendent d'implementar: {method_name}",
-            code="not_implemented",
+            f"Metode RPC no suportat pel ConfigurationHandler: {method_name}",
+            code="unknown_method",
         )
 
 
-class ConsumptionHandler:
-    """Punt d'extensio reservat per historics de consum."""
+class IdentityHandler:
+    """Gestiona la identitat visible del dispositiu SEM6000."""
 
-    methods = ("getConsumption23h", "getConsumption30d", "getConsumption12m")
+    methods = (
+        "getDeviceName",
+        "setDeviceName",
+        "getDeviceSerial",
+    )
 
     def handle(self, method_name: str, params: Any, context: CommandContext) -> Dict[str, Any]:
+        method_key = normalize_method(method_name)
+
+        if method_key == "getdevicename":
+            notification = context.sem.request_device_name()
+            device_name = str(getattr(notification, "device_name", "")).strip()
+            response = {"device_name": device_name}
+            context.attributes.publish(response)
+            return response
+
+        if method_key == "setdevicename":
+            raw_name = params.get("device_name") if isinstance(params, dict) else params
+            device_name = str(raw_name or "").strip()
+            if not device_name:
+                raise CommandError(
+                    "El camp device_name no pot ser buit.",
+                    code="invalid_params",
+                )
+            if len(device_name) > 18:
+                raise CommandError(
+                    "El camp device_name no pot superar els 18 caracters.",
+                    code="invalid_params",
+                )
+            context.sem.change_device_name(device_name)
+            response = {"device_name": device_name}
+            context.attributes.publish(response)
+            return response
+
+        if method_key == "getdeviceserial":
+            notification = context.sem.request_device_serial()
+            return {"device_serial": str(getattr(notification, "serial", "")).strip()}
+
         raise CommandError(
-            f"Metode pendent d'implementar: {method_name}",
-            code="not_implemented",
+            f"Metode RPC no suportat pel IdentityHandler: {method_name}",
+            code="unknown_method",
+        )
+
+
+class TimerHandler:
+    """Gestiona el timer del SEM6000."""
+
+    methods = (
+        "getTimer",
+        "setTimer",
+        "resetTimer",
+    )
+
+    def handle(self, method_name: str, params: Any, context: CommandContext) -> Dict[str, Any]:
+        method_key = normalize_method(method_name)
+
+        if method_key == "gettimer":
+            timer_payload = normalize_timer_status_notification(
+                context.sem.request_timer_status()
+            )
+            context.attributes.publish(flatten_timer_attributes(timer_payload))
+            return timer_payload
+
+        if method_key == "settimer":
+            params_dict = _require_dict_params(params, method_name=method_name)
+            action = _normalize_action_label(
+                params_dict.get("action"),
+                field_name="action",
+            )
+            target_isodatetime = _normalize_isodatetime_seconds(
+                params_dict.get("target_isodatetime"),
+                field_name="target_isodatetime",
+            )
+            context.sem.activate_timer_at(
+                _action_label_to_bool(action),
+                target_isodatetime,
+            )
+            timer_payload = normalize_timer_status_notification(
+                context.sem.request_timer_status()
+            )
+            context.attributes.publish(flatten_timer_attributes(timer_payload))
+            return timer_payload
+
+        if method_key == "resettimer":
+            context.sem.reset_timer()
+            timer_payload = normalize_timer_status_notification(
+                context.sem.request_timer_status()
+            )
+            context.attributes.publish(flatten_timer_attributes(timer_payload))
+            return timer_payload
+
+        raise CommandError(
+            f"Metode RPC no suportat pel TimerHandler: {method_name}",
+            code="unknown_method",
+        )
+
+
+class RandomModeHandler:
+    """Gestiona el random mode del SEM6000."""
+
+    methods = (
+        "getRandomMode",
+        "setRandomMode",
+        "resetRandomMode",
+    )
+
+    def handle(self, method_name: str, params: Any, context: CommandContext) -> Dict[str, Any]:
+        method_key = normalize_method(method_name)
+
+        if method_key == "getrandommode":
+            random_mode_payload = normalize_random_mode_notification(
+                context.sem.request_random_mode_status()
+            )
+            context.attributes.publish(
+                flatten_random_mode_attributes(random_mode_payload)
+            )
+            return random_mode_payload
+
+        if method_key == "setrandommode":
+            params_dict = _require_dict_params(params, method_name=method_name)
+            weekdays = _normalize_weekdays_string(
+                params_dict.get("weekdays"),
+                field_name="weekdays",
+            )
+            start_isotime = _normalize_isotime_minutes(
+                params_dict.get("start"),
+                field_name="start",
+            )
+            end_isotime = _normalize_isotime_minutes(
+                params_dict.get("end"),
+                field_name="end",
+            )
+            context.sem.change_random_mode(weekdays, start_isotime, end_isotime)
+            random_mode_payload = normalize_random_mode_notification(
+                context.sem.request_random_mode_status()
+            )
+            context.attributes.publish(
+                flatten_random_mode_attributes(random_mode_payload)
+            )
+            return random_mode_payload
+
+        if method_key == "resetrandommode":
+            context.sem.reset_random_mode()
+            random_mode_payload = normalize_random_mode_notification(
+                context.sem.request_random_mode_status()
+            )
+            context.attributes.publish(
+                flatten_random_mode_attributes(random_mode_payload)
+            )
+            return random_mode_payload
+
+        raise CommandError(
+            f"Metode RPC no suportat pel RandomModeHandler: {method_name}",
+            code="unknown_method",
+        )
+
+
+class ScheduleHandler:
+    """Exposa la gestio completa de schedulers del SEM6000 via RPC."""
+
+    methods = (
+        "getScheduler",
+        "getSchedulers",
+        "addScheduler",
+        "editScheduler",
+        "addOnetimeScheduler",
+        "editOnetimeScheduler",
+        "addRepeatedScheduler",
+        "editRepeatedScheduler",
+        "removeScheduler",
+    )
+
+    @staticmethod
+    def _refresh_schedulers(context: CommandContext) -> Dict[str, Any]:
+        return normalize_scheduler_notification(context.sem.request_scheduler())
+
+    def handle(self, method_name: str, params: Any, context: CommandContext) -> Dict[str, Any]:
+        method_key = normalize_method(method_name)
+
+        if method_key in {"getscheduler", "getschedulers"}:
+            return self._refresh_schedulers(context)
+
+        if method_key == "removescheduler":
+            raw_slot_id = params.get("slot_id") if isinstance(params, dict) else params
+            slot_id = _normalize_slot_id(raw_slot_id)
+            context.sem.remove_scheduler(slot_id)
+            return self._refresh_schedulers(context)
+
+        params_dict = _require_dict_params(params, method_name=method_name)
+        enabled = _normalize_bool_field(
+            params_dict,
+            field_name="enabled",
+            aliases=("active", "is_active"),
+        )
+        action = _normalize_action_field(params_dict)
+        turn_on = _action_label_to_bool(action)
+
+        scheduler_type: Optional[str] = None
+        if method_key in {"addscheduler", "editscheduler"}:
+            scheduler_type = _normalize_scheduler_type(
+                params_dict.get("type", params_dict.get("scheduler_type")),
+            )
+        elif method_key in {"addonetimescheduler", "editonetimescheduler"}:
+            scheduler_type = "onetime"
+        elif method_key in {"addrepeatedscheduler", "editrepeatedscheduler"}:
+            scheduler_type = "repeated"
+
+        if scheduler_type is None:
+            raise CommandError(
+                f"Metode RPC no suportat pel ScheduleHandler: {method_name}",
+                code="unknown_method",
+            )
+
+        slot_id: Optional[int] = None
+        if method_key.startswith("edit"):
+            slot_id = _normalize_slot_id(params_dict.get("slot_id"))
+
+        if scheduler_type == "onetime":
+            target_isodatetime = _normalize_isodatetime_seconds(
+                params_dict.get("target_isodatetime"),
+                field_name="target_isodatetime",
+            )
+            if slot_id is None:
+                context.sem.add_onetime_scheduler(enabled, turn_on, target_isodatetime)
+            else:
+                context.sem.edit_onetime_scheduler(
+                    slot_id,
+                    enabled,
+                    turn_on,
+                    target_isodatetime,
+                )
+            return self._refresh_schedulers(context)
+
+        weekdays = _normalize_weekdays_string(
+            params_dict.get("weekdays"),
+            field_name="weekdays",
+        )
+        isotime = _normalize_isotime_minutes(
+            params_dict.get("time", params_dict.get("isotime")),
+            field_name="time",
+        )
+        if slot_id is None:
+            context.sem.add_repeated_scheduler(enabled, turn_on, weekdays, isotime)
+        else:
+            context.sem.edit_repeated_scheduler(
+                slot_id,
+                enabled,
+                turn_on,
+                weekdays,
+                isotime,
+            )
+        return self._refresh_schedulers(context)
+
+
+class ConsumptionHandler:
+    """Exposa historics de consum i reset del comptador intern."""
+
+    methods = (
+        "getConsumption23h",
+        "getConsumption30d",
+        "getConsumption12m",
+        "resetConsumption",
+    )
+
+    def handle(self, method_name: str, params: Any, context: CommandContext) -> Dict[str, Any]:
+        method_key = normalize_method(method_name)
+
+        if method_key == "getconsumption23h":
+            return normalize_consumption_23h_notification(
+                context.sem.request_consumption_of_last_23_hours()
+            )
+
+        if method_key == "getconsumption30d":
+            return normalize_consumption_30d_notification(
+                context.sem.request_consumption_of_last_30_days()
+            )
+
+        if method_key == "getconsumption12m":
+            return normalize_consumption_12m_notification(
+                context.sem.request_consumption_of_last_12_months()
+            )
+
+        if method_key == "resetconsumption":
+            context.sem.reset_consumption()
+            return {"consumption_reset": True}
+
+        raise CommandError(
+            f"Metode RPC no suportat pel ConsumptionHandler: {method_name}",
+            code="unknown_method",
+        )
+
+
+class AdministrativeHandler:
+    """Exposa operacions administratives sensibles del SEM6000."""
+
+    methods = (
+        "adminChangePin",
+        "adminResetPin",
+        "adminFactoryReset",
+    )
+
+    def handle(self, method_name: str, params: Any, context: CommandContext) -> Dict[str, Any]:
+        method_key = normalize_method(method_name)
+
+        if method_key == "adminchangepin":
+            params_dict = _require_dict_params(params, method_name=method_name)
+            new_pin = _normalize_pin(params_dict.get("new_pin"), field_name="new_pin")
+            context.sem.change_pin(new_pin)
+            return {"pin_changed": True}
+
+        if method_key == "adminresetpin":
+            context.sem.reset_pin()
+            return {"pin_reset": True, "active_pin": "0000"}
+
+        if method_key == "adminfactoryreset":
+            context.sem.factory_reset()
+            return {"factory_reset": True, "active_pin": "0000"}
+
+        raise CommandError(
+            f"Metode RPC no suportat pel AdministrativeHandler: {method_name}",
+            code="unknown_method",
         )
 
 
@@ -906,8 +2197,13 @@ class MqttSem6000Agent:
         self._registry = CommandRegistry()
         self._registry.register(PowerHandler())
         self._registry.register(MeasurementHandler())
+        self._registry.register(ConfigurationHandler())
+        self._registry.register(IdentityHandler())
+        self._registry.register(TimerHandler())
+        self._registry.register(RandomModeHandler())
         self._registry.register(ScheduleHandler())
         self._registry.register(ConsumptionHandler())
+        self._registry.register(AdministrativeHandler())
 
     def _build_client(self, use_tls: bool) -> mqtt.Client:
         if hasattr(mqtt, "CallbackAPIVersion"):
