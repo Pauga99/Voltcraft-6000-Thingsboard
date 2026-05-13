@@ -35,6 +35,7 @@ POWER_STATE_KEY = "plug_on"
 
 BRIDGE_NAME = "raspberry-sem6000-gw"
 DEFAULT_DIAGNOSTICS_INTERVAL_SECONDS = 30.0
+DEFAULT_HISTORY_TIMEOUT_SECONDS = 12.0
 
 POWER_MUTATING_METHODS = {
     "setpower",
@@ -483,7 +484,16 @@ def _sem6000_message_has_valid_checksum(
     payload = raw_message[2 : payload_end - 1]
     checksum_received = raw_message[payload_end - 1]
     checksum_actual = (1 + sum(payload)) & 0xFF
-    return checksum_received == checksum_actual
+    if checksum_received == checksum_actual:
+        return True
+
+    # Alguns SEM6000 HW v3 retornen l'historic diari 0x0b00 amb un checksum
+    # que no segueix la formula documentada, tot i que la longitud i el sufix
+    # del frame son coherents.
+    if hardware_version is not None and hardware_version >= 3 and payload[0:2] == b"\x0b\x00":
+        return len(payload) >= 2 and (len(payload) - 2) % 4 == 0
+
+    return False
 
 
 def sem6000_raw_notifications_complete(
@@ -872,6 +882,7 @@ class AppConfig:
     sem6000_device_address: str
     sem6000_pin: str
     sem6000_timeout_seconds: float
+    sem6000_history_timeout_seconds: float
     sem6000_debug: bool
     tb_host: str
     tb_gateway_access_token: str
@@ -933,6 +944,12 @@ class AppConfig:
             sem6000_device_address=device_address,
             sem6000_pin=os.getenv("SEM6000_PIN", "0000").strip(),
             sem6000_timeout_seconds=float(os.getenv("SEM6000_TIMEOUT_SECONDS", "3")),
+            sem6000_history_timeout_seconds=float(
+                os.getenv(
+                    "SEM6000_HISTORY_TIMEOUT_SECONDS",
+                    str(DEFAULT_HISTORY_TIMEOUT_SECONDS),
+                )
+            ),
             sem6000_debug=parse_env_bool("SEM6000_DEBUG", False),
             tb_host=os.getenv("THINGSBOARD_MQTT_HOST", "mqtt.eu.thingsboard.cloud").strip(),
             tb_gateway_access_token=access_token,
@@ -1082,12 +1099,14 @@ class Sem6000Session:
         address: str,
         pin: str,
         timeout_seconds: float,
+        history_timeout_seconds: float,
         debug: bool,
         log: logging.Logger,
     ) -> None:
         self._address = address
         self._pin = pin
         self._timeout_seconds = timeout_seconds
+        self._history_timeout_seconds = max(history_timeout_seconds, timeout_seconds)
         self._debug = debug
         self._log = log
 
@@ -1171,12 +1190,34 @@ class Sem6000Session:
         self._device = self._new_device()
         self._is_connected = True
 
-    def _run_ble(self, operation_name: str, operation: Callable[[Any], Any]) -> Any:
+    def _call_device_with_timeout_locked(
+        self,
+        operation: Callable[[Any], Any],
+        timeout_seconds: Optional[float],
+    ) -> Any:
+        device = self._device
+        if timeout_seconds is None or device is None or not hasattr(device, "timeout"):
+            return operation(device)
+
+        previous_timeout = getattr(device, "timeout")
+        device.timeout = timeout_seconds
+        try:
+            return operation(device)
+        finally:
+            device.timeout = previous_timeout
+
+    def _run_ble(
+        self,
+        operation_name: str,
+        operation: Callable[[Any], Any],
+        *,
+        timeout_seconds: Optional[float] = None,
+    ) -> Any:
         with self._lock:
             started_at = time.monotonic()
             try:
                 self._ensure_connected_locked()
-                result = operation(self._device)
+                result = self._call_device_with_timeout_locked(operation, timeout_seconds)
                 self._is_connected = True
                 return result
             except CommandError:
@@ -1190,7 +1231,10 @@ class Sem6000Session:
                 )
                 try:
                     self._reconnect_locked()
-                    result = operation(self._device)
+                    result = self._call_device_with_timeout_locked(
+                        operation,
+                        timeout_seconds,
+                    )
                     self._is_connected = True
                     return result
                 except Exception as second_exc:
@@ -1408,6 +1452,7 @@ class Sem6000Session:
         return self._run_ble(
             "request_consumption_of_last_30_days",
             lambda device: device.request_consumption_of_last_30_days(),
+            timeout_seconds=self._history_timeout_seconds,
         )
 
     def request_consumption_of_last_12_months(self) -> Any:
@@ -2170,6 +2215,7 @@ class MqttSem6000Agent:
             address=config.sem6000_device_address,
             pin=config.sem6000_pin,
             timeout_seconds=config.sem6000_timeout_seconds,
+            history_timeout_seconds=config.sem6000_history_timeout_seconds,
             debug=config.sem6000_debug,
             log=self._log,
         )
@@ -2330,6 +2376,11 @@ class MqttSem6000Agent:
         self._log.info(
             "Mesures esteses a ThingsBoard: automatiques quan l'endoll esta actiu; forcades per flag=%s",
             self._cfg.enable_extended_measurements,
+        )
+        self._log.info(
+            "Timeouts BLE: normal=%.1fs, historic=%.1fs",
+            self._cfg.sem6000_timeout_seconds,
+            self._cfg.sem6000_history_timeout_seconds,
         )
 
         mode = self._cfg.tb_tls_mode

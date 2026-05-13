@@ -383,6 +383,19 @@ class Sem6000NotificationCompletionTests(unittest.TestCase):
             MODULE.sem6000_raw_notifications_complete([full_message], hardware_version=2)
         )
 
+    def test_hw3_daily_history_accepts_known_device_checksum_anomaly(self):
+        full_message = bytes.fromhex(
+            "0f7b0b0000000000000000000000000000000000000000000000000000003c"
+            "000000000000000000000000000000000000000000000007000000000000"
+            "000000000000000000000000000000000000000000000000000000000000"
+            "000000070000000000000000000000000000005a00000000000000000000"
+            "0000006dffff"
+        )
+
+        self.assertTrue(
+            MODULE.sem6000_raw_notifications_complete([full_message], hardware_version=3)
+        )
+
     def test_wait_for_notifications_keeps_polling_while_message_is_partial(self):
         payload = b"\x0b\x00" + (b"\x00" * 120)
         checksum = ((1 + sum(payload)) & 0xFF).to_bytes(1, "big")
@@ -444,6 +457,35 @@ class Sem6000NotificationCompletionTests(unittest.TestCase):
         self.assertEqual(5.0, wait_calls[0])
         self.assertLess(wait_calls[1], wait_calls[0])
         self.assertLess(wait_calls[2], wait_calls[0])
+
+
+class Sem6000SessionTimeoutTests(unittest.TestCase):
+    def test_30d_history_uses_longer_timeout_and_restores_device_timeout(self):
+        class FakeDevice:
+            def __init__(self):
+                self.timeout = 3.0
+                self.timeouts_seen = []
+
+            def request_consumption_of_last_30_days(self):
+                self.timeouts_seen.append(self.timeout)
+                return DummyConsumption30Days()
+
+        fake_device = FakeDevice()
+        session = MODULE.Sem6000Session(
+            address="b3:00:00:00:30:43",
+            pin="0000",
+            timeout_seconds=3.0,
+            history_timeout_seconds=12.0,
+            debug=False,
+            log=logging.getLogger("test"),
+        )
+        session._new_device = lambda: fake_device
+
+        result = session.request_consumption_of_last_30_days()
+
+        self.assertIsInstance(result, DummyConsumption30Days)
+        self.assertEqual([12.0], fake_device.timeouts_seen)
+        self.assertEqual(3.0, fake_device.timeout)
 
 
 class RpcQueueTests(unittest.TestCase):
@@ -1511,6 +1553,26 @@ class HandlerBehaviorTests(unittest.TestCase):
         self.assertIsNone(response["samples"][1]["consumption_wh"])
         self.assertIn("timestamp_local", response["samples"][0])
         self.assertIn("isotime", response["samples"][0])
+
+    def test_get_consumption_30d_returns_date_labels(self):
+        sem = StubSem(consumption30d_result=DummyConsumption30Days())
+        context = MODULE.CommandContext(
+            sem=sem,
+            state=MODULE.AgentState(),
+            telemetry=StubTelemetry(),
+            attributes=StubAttributes(),
+            config=SimpleNamespace(enable_extended_measurements=False),
+        )
+
+        response = MODULE.ConsumptionHandler().handle("getConsumption30d", None, context)
+
+        self.assertEqual(1, sem.request_consumption_of_last_30_days_calls)
+        self.assertEqual("day", response["interval"])
+        self.assertEqual("Wh", response["unit"])
+        self.assertEqual(3, response["sample_count"])
+        self.assertEqual(0, response["samples"][0]["days_ago"])
+        self.assertEqual(120, response["samples"][0]["consumption_wh"])
+        self.assertRegex(response["samples"][0]["date"], r"^\d{4}-\d{2}-\d{2}$")
 
     def test_get_consumption_12m_returns_year_month_labels(self):
         sem = StubSem(consumption12m_result=DummyConsumption12Months())
