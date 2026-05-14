@@ -487,13 +487,63 @@ def _sem6000_message_has_valid_checksum(
     if checksum_received == checksum_actual:
         return True
 
-    # Alguns SEM6000 HW v3 retornen l'historic diari 0x0b00 amb un checksum
-    # que no segueix la formula documentada, tot i que la longitud i el sufix
-    # del frame son coherents.
-    if hardware_version is not None and hardware_version >= 3 and payload[0:2] == b"\x0b\x00":
-        return len(payload) >= 2 and (len(payload) - 2) % 4 == 0
+    # Alguns SEM6000 HW v3 retornen historics amb un checksum que no segueix
+    # la formula documentada, tot i que la longitud i el sufix son coherents.
+    if hardware_version is not None and hardware_version >= 3:
+        return _sem6000_history_payload_has_expected_shape(payload)
 
     return False
+
+
+def _sem6000_history_payload_has_expected_shape(payload: bytes) -> bool:
+    """Comprova les mides fixes dels tres historics de consum del SEM6000."""
+    command = payload[0:2]
+    if command == b"\x0a\x00":
+        return len(payload) == 2 + (24 * 2)
+    if command == b"\x0b\x00":
+        return len(payload) == 2 + (30 * 4)
+    if command == b"\x0c\x00":
+        return len(payload) == 2 + (12 * 4)
+    return False
+
+
+def _parse_sem6000_payload_lenient(data: bytes, hardware_version: Optional[int]) -> bytes:
+    """Replica el parser base, amb tolerancia acotada per historics HW v3."""
+    if data[0:1] != b"\x0f":
+        raise Exception("Invalid response")
+
+    length_of_payload = _sem6000_message_payload_length(data, hardware_version)
+    if length_of_payload is None:
+        raise Exception("Invalid response")
+
+    if len(data) < 2 + length_of_payload:
+        raise Exception("Incomplete notification data")
+
+    payload = data[2 : 2 + length_of_payload - 1]
+    checksum_received = data[2 + length_of_payload - 1]
+    checksum = (1 + sum(payload)) & 0xFF
+
+    if checksum_received != checksum:
+        is_hw3_history = (
+            hardware_version is not None
+            and hardware_version >= 3
+            and _sem6000_history_payload_has_expected_shape(payload)
+            and data[2 + length_of_payload : 4 + length_of_payload] == b"\xff\xff"
+        )
+        if not is_hw3_history:
+            raise Exception(
+                "Invalid checksum: actual="
+                + str(checksum)
+                + ", received="
+                + str(checksum_received)
+            )
+
+    if len(data) > 2 + length_of_payload:
+        suffix = data[2 + length_of_payload : 4 + length_of_payload]
+        if suffix != b"\xff\xff":
+            raise Exception("Invalid suffix " + str(suffix))
+
+    return payload
 
 
 def sem6000_raw_notifications_complete(
@@ -545,6 +595,7 @@ def wait_for_sem6000_notifications(
     wait_for_notifications: Callable[[float], bool],
     delegate: Any,
     timeout_seconds: float,
+    should_stop: Optional[Callable[[], bool]] = None,
 ) -> None:
     """Espera notificacions BLE evitant tallar massa aviat respostes fragmentades.
 
@@ -556,15 +607,25 @@ def wait_for_sem6000_notifications(
     """
     timeout = max(float(timeout_seconds or 0.0), 0.1)
     partial_poll_seconds = min(max(timeout / 5.0, 0.2), 1.0)
-    partial_grace_seconds = max(timeout * 3.0, timeout + 2.0)
+    partial_grace_seconds = max(timeout, 2.0)
+    interrupt_poll_seconds = 0.5
     partial_deadline: Optional[float] = None
+    last_raw_length = 0
 
     while True:
+        if should_stop is not None and should_stop():
+            return
+
         if delegate.has_final_raw_notification():
             return
 
         raw_notifications = getattr(delegate, "_raw_notifications", [])
         has_partial = bool(raw_notifications)
+        raw_length = sum(
+            len(chunk)
+            for chunk in raw_notifications
+            if isinstance(chunk, (bytes, bytearray))
+        )
 
         wait_timeout = timeout
         if has_partial:
@@ -575,13 +636,26 @@ def wait_for_sem6000_notifications(
                 return
             wait_timeout = min(partial_poll_seconds, remaining)
 
+        if should_stop is not None:
+            wait_timeout = min(wait_timeout, interrupt_poll_seconds)
+
         if not wait_for_notifications(wait_timeout):
             if has_partial:
                 continue
             return
 
-        if getattr(delegate, "_raw_notifications", []):
+        if should_stop is not None and should_stop():
+            return
+
+        raw_notifications = getattr(delegate, "_raw_notifications", [])
+        raw_length = sum(
+            len(chunk)
+            for chunk in raw_notifications
+            if isinstance(chunk, (bytes, bytearray))
+        )
+        if raw_length > last_raw_length:
             partial_deadline = time.monotonic() + partial_grace_seconds
+            last_raw_length = raw_length
 
 
 def _normalize_bool_field(
@@ -1102,6 +1176,7 @@ class Sem6000Session:
         history_timeout_seconds: float,
         debug: bool,
         log: logging.Logger,
+        stop_event: Optional[threading.Event] = None,
     ) -> None:
         self._address = address
         self._pin = pin
@@ -1109,6 +1184,7 @@ class Sem6000Session:
         self._history_timeout_seconds = max(history_timeout_seconds, timeout_seconds)
         self._debug = debug
         self._log = log
+        self._stop_event = stop_event
 
         self._device: Any = None
         self._lock = threading.Lock()
@@ -1116,10 +1192,15 @@ class Sem6000Session:
         self._is_connected = False
         self._last_operation_ms: Optional[float] = None
 
+    def _should_stop(self) -> bool:
+        return bool(self._stop_event is not None and self._stop_event.is_set())
+
     def _patch_sem6000_delegate(self, sem_module: Any) -> None:
         """Aplica pegats per fer mes robust el transport BLE de la llibreria base."""
-        delegate_cls = getattr(getattr(sem_module, "sem6000", None), "SEM6000Delegate", None)
-        sem_cls = getattr(getattr(sem_module, "sem6000", None), "SEM6000", None)
+        sem6000_ns = getattr(sem_module, "sem6000", None)
+        delegate_cls = getattr(sem6000_ns, "SEM6000Delegate", None)
+        sem_cls = getattr(sem6000_ns, "SEM6000", None)
+        parser_cls = getattr(getattr(sem6000_ns, "parser", None), "MessageParser", None)
 
         if delegate_cls is not None and not getattr(
             delegate_cls, "_codis_completion_patch_applied", False
@@ -1133,16 +1214,84 @@ class Sem6000Session:
             delegate_cls.has_final_raw_notification = _patched_has_final_raw_notification
             delegate_cls._codis_completion_patch_applied = True
 
+        if parser_cls is not None and not getattr(
+            parser_cls, "_codis_payload_patch_applied", False
+        ):
+            def _patched_parse_payload(parser_self: Any, data: bytes) -> bytes:
+                return _parse_sem6000_payload_lenient(
+                    data,
+                    getattr(parser_self, "hardware_version", None),
+                )
+
+            parser_cls._parse_payload = _patched_parse_payload
+            parser_cls._codis_payload_patch_applied = True
+
         if sem_cls is not None and not getattr(sem_cls, "_codis_wait_patch_applied", False):
             def _patched_wait_for_notifications(device_self: Any) -> None:
+                should_stop = getattr(device_self, "_codis_should_stop", None)
                 wait_for_sem6000_notifications(
                     getattr(device_self._bluetooth_lowenergy_interface, "wait_for_notifications"),
                     getattr(device_self, "_delegate"),
                     float(getattr(device_self, "timeout", self._timeout_seconds)),
+                    should_stop=should_stop if callable(should_stop) else None,
                 )
 
             sem_cls._wait_for_notifications = _patched_wait_for_notifications
             sem_cls._codis_wait_patch_applied = True
+
+        if (
+            sem6000_ns is not None
+            and sem_cls is not None
+            and not getattr(sem_cls, "_codis_history_patch_applied", False)
+        ):
+            def _request_history_once(
+                device_self: Any,
+                command_class_name: str,
+                notification_class_name: str,
+                error_message: str,
+            ) -> Any:
+                command_cls = getattr(sem6000_ns, command_class_name)
+                notification_cls = getattr(sem6000_ns, notification_class_name)
+                device_self._send_command(command_cls())
+                notification = device_self._consume_notification()
+                if not isinstance(notification, notification_cls):
+                    raise Exception(error_message)
+                return notification
+
+            def _patched_request_consumption_of_last_23_hours(device_self: Any) -> Any:
+                return _request_history_once(
+                    device_self,
+                    "RequestConsumptionOfLast23HoursCommand",
+                    "ConsumptionOfLast23HoursRequestedNotification",
+                    "Request consumption of last 23 hours failed",
+                )
+
+            def _patched_request_consumption_of_last_30_days(device_self: Any) -> Any:
+                return _request_history_once(
+                    device_self,
+                    "RequestConsumptionOfLast30DaysCommand",
+                    "ConsumptionOfLast30DaysRequestedNotification",
+                    "Request consumption of last 30 days failed",
+                )
+
+            def _patched_request_consumption_of_last_12_months(device_self: Any) -> Any:
+                return _request_history_once(
+                    device_self,
+                    "RequestConsumptionOfLast12MonthsCommand",
+                    "ConsumptionOfLast12MonthsRequestedNotification",
+                    "Request consumption of last 12 months failed",
+                )
+
+            sem_cls.request_consumption_of_last_23_hours = (
+                _patched_request_consumption_of_last_23_hours
+            )
+            sem_cls.request_consumption_of_last_30_days = (
+                _patched_request_consumption_of_last_30_days
+            )
+            sem_cls.request_consumption_of_last_12_months = (
+                _patched_request_consumption_of_last_12_months
+            )
+            sem_cls._codis_history_patch_applied = True
 
     def _import_sem6000_module(self) -> Any:
         if self._sem6000_module is not None:
@@ -1161,12 +1310,14 @@ class Sem6000Session:
     def _new_device(self) -> Any:
         sem_module = self._import_sem6000_module()
         sem6000_mod = sem_module.sem6000
-        return sem6000_mod.SEM6000(
+        device = sem6000_mod.SEM6000(
             deviceAddr=self._address,
             pin=self._pin,
             timeout=self._timeout_seconds,
             debug=self._debug,
         )
+        device._codis_should_stop = self._should_stop
+        return device
 
     def _ensure_connected_locked(self) -> None:
         if self._device is None:
@@ -1216,6 +1367,11 @@ class Sem6000Session:
         with self._lock:
             started_at = time.monotonic()
             try:
+                if self._should_stop():
+                    raise CommandError(
+                        f"{operation_name} cancelada per aturada de l'agent.",
+                        code="stopping",
+                    )
                 self._ensure_connected_locked()
                 result = self._call_device_with_timeout_locked(operation, timeout_seconds)
                 self._is_connected = True
@@ -1224,6 +1380,11 @@ class Sem6000Session:
                 raise
             except Exception as first_exc:
                 self._is_connected = False
+                if self._should_stop():
+                    raise CommandError(
+                        f"{operation_name} cancelada per aturada de l'agent.",
+                        code="stopping",
+                    ) from first_exc
                 self._log.warning(
                     "%s ha fallat (%s). Reconnectant i reintentant una vegada.",
                     operation_name,
@@ -1231,6 +1392,8 @@ class Sem6000Session:
                 )
                 try:
                     self._reconnect_locked()
+                    if self._device is not None:
+                        self._device._codis_should_stop = self._should_stop
                     result = self._call_device_with_timeout_locked(
                         operation,
                         timeout_seconds,
@@ -1446,6 +1609,7 @@ class Sem6000Session:
         return self._run_ble(
             "request_consumption_of_last_23_hours",
             lambda device: device.request_consumption_of_last_23_hours(),
+            timeout_seconds=self._history_timeout_seconds,
         )
 
     def request_consumption_of_last_30_days(self) -> Any:
@@ -1459,6 +1623,7 @@ class Sem6000Session:
         return self._run_ble(
             "request_consumption_of_last_12_months",
             lambda device: device.request_consumption_of_last_12_months(),
+            timeout_seconds=self._history_timeout_seconds,
         )
 
     def reset_consumption(self) -> None:
@@ -1497,16 +1662,33 @@ class Sem6000Session:
             self._disconnect_locked()
 
     def last_operation_ms(self) -> Optional[float]:
-        with self._lock:
+        if not self._lock.acquire(timeout=0.05):
             return self._last_operation_ms
+        try:
+            return self._last_operation_ms
+        finally:
+            self._lock.release()
 
     def is_connected(self) -> bool:
-        with self._lock:
+        if not self._lock.acquire(timeout=0.05):
             return self._is_connected
+        try:
+            return self._is_connected
+        finally:
+            self._lock.release()
 
-    def disconnect(self) -> None:
-        with self._lock:
+    def disconnect(self, wait_timeout_seconds: float = 1.0) -> bool:
+        acquired = self._lock.acquire(timeout=max(float(wait_timeout_seconds), 0.0))
+        if not acquired:
+            self._log.warning(
+                "No s'ha pogut tancar BLE ara mateix: hi ha una operacio en curs."
+            )
+            return False
+        try:
             self._disconnect_locked()
+            return True
+        finally:
+            self._lock.release()
 
 
 PublishJsonFn = Callable[[str, Dict[str, Any], int], None]
@@ -2218,6 +2400,7 @@ class MqttSem6000Agent:
             history_timeout_seconds=config.sem6000_history_timeout_seconds,
             debug=config.sem6000_debug,
             log=self._log,
+            stop_event=self._stop_event,
         )
 
         self._telemetry_publisher = TelemetryPublisher(
@@ -2641,13 +2824,16 @@ class MqttSem6000Agent:
         )
         self._telemetry_thread.start()
 
+    def request_stop(self) -> None:
+        self._stop_event.set()
+
     def stop(self) -> None:
         self._stop_event.set()
 
         if self._worker_thread and self._worker_thread.is_alive():
-            self._worker_thread.join(timeout=5)
+            self._worker_thread.join(timeout=1)
         if self._telemetry_thread and self._telemetry_thread.is_alive():
-            self._telemetry_thread.join(timeout=5)
+            self._telemetry_thread.join(timeout=1)
 
         client = self._client
         if client is not None and self._state.mqtt_connected:
@@ -2667,7 +2853,8 @@ class MqttSem6000Agent:
                 pass
 
         self._state.mqtt_connected = False
-        self._sem.disconnect()
+        worker_busy = bool(self._worker_thread and self._worker_thread.is_alive())
+        self._sem.disconnect(wait_timeout_seconds=0.0 if worker_busy else 1.0)
 
     def run_forever(self) -> None:
         self.start()
@@ -2681,9 +2868,9 @@ def install_signal_handlers(agent: MqttSem6000Agent) -> None:
 
     def _handle_signal(signum: int, frame: Any) -> None:
         logging.getLogger("Sem6000ThingsBoardMqttAgent").info(
-            "Senyal %s rebuda. Aturant agent...", signum
+            "Senyal %s rebuda. Demanant aturada de l'agent...", signum
         )
-        agent.stop()
+        agent.request_stop()
 
     for sig in (signal.SIGINT, signal.SIGTERM):
         try:

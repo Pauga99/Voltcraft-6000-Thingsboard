@@ -396,6 +396,45 @@ class Sem6000NotificationCompletionTests(unittest.TestCase):
             MODULE.sem6000_raw_notifications_complete([full_message], hardware_version=3)
         )
 
+    def test_hw3_history_checksum_anomaly_is_limited_to_expected_history_shapes(self):
+        hourly_payload = b"\x0a\x00" + (b"\x00\x01" * 24)
+        monthly_payload = b"\x0c\x00" + ((b"\x00\x00\x01\x00") * 12)
+        invalid_shape_payload = b"\x0a\x00" + b"\x00\x01"
+
+        for payload in (hourly_payload, monthly_payload):
+            checksum = (1 + sum(payload)) & 0xFF
+            wrong_checksum = ((checksum + 1) & 0xFF).to_bytes(1, "big")
+            full_message = (
+                b"\x0f"
+                + bytes([len(payload) + 1])
+                + payload
+                + wrong_checksum
+                + b"\xff\xff"
+            )
+
+            self.assertTrue(
+                MODULE.sem6000_raw_notifications_complete(
+                    [full_message],
+                    hardware_version=3,
+                )
+            )
+
+        checksum = (1 + sum(invalid_shape_payload)) & 0xFF
+        wrong_checksum = ((checksum + 1) & 0xFF).to_bytes(1, "big")
+        invalid_shape_message = (
+            b"\x0f"
+            + bytes([len(invalid_shape_payload) + 1])
+            + invalid_shape_payload
+            + wrong_checksum
+            + b"\xff\xff"
+        )
+        self.assertFalse(
+            MODULE.sem6000_raw_notifications_complete(
+                [invalid_shape_message],
+                hardware_version=3,
+            )
+        )
+
     def test_wait_for_notifications_keeps_polling_while_message_is_partial(self):
         payload = b"\x0b\x00" + (b"\x00" * 120)
         checksum = ((1 + sum(payload)) & 0xFF).to_bytes(1, "big")
@@ -458,17 +497,51 @@ class Sem6000NotificationCompletionTests(unittest.TestCase):
         self.assertLess(wait_calls[1], wait_calls[0])
         self.assertLess(wait_calls[2], wait_calls[0])
 
+    def test_wait_for_notifications_uses_short_polls_when_stop_callback_available(self):
+        class FakeDelegate:
+            def __init__(self):
+                self._raw_notifications = []
+
+            def has_final_raw_notification(self):
+                return False
+
+        delegate = FakeDelegate()
+        wait_calls = []
+        stopped = [False]
+
+        def fake_wait(timeout):
+            wait_calls.append(timeout)
+            stopped[0] = True
+            return True
+
+        MODULE.wait_for_sem6000_notifications(
+            fake_wait,
+            delegate,
+            timeout_seconds=12.0,
+            should_stop=lambda: stopped[0],
+        )
+
+        self.assertEqual([0.5], wait_calls)
+
 
 class Sem6000SessionTimeoutTests(unittest.TestCase):
-    def test_30d_history_uses_longer_timeout_and_restores_device_timeout(self):
+    def test_history_requests_use_longer_timeout_and_restore_device_timeout(self):
         class FakeDevice:
             def __init__(self):
                 self.timeout = 3.0
                 self.timeouts_seen = []
 
+            def request_consumption_of_last_23_hours(self):
+                self.timeouts_seen.append(("23h", self.timeout))
+                return DummyConsumption23Hours()
+
             def request_consumption_of_last_30_days(self):
-                self.timeouts_seen.append(self.timeout)
+                self.timeouts_seen.append(("30d", self.timeout))
                 return DummyConsumption30Days()
+
+            def request_consumption_of_last_12_months(self):
+                self.timeouts_seen.append(("12m", self.timeout))
+                return DummyConsumption12Months()
 
         fake_device = FakeDevice()
         session = MODULE.Sem6000Session(
@@ -481,11 +554,34 @@ class Sem6000SessionTimeoutTests(unittest.TestCase):
         )
         session._new_device = lambda: fake_device
 
-        result = session.request_consumption_of_last_30_days()
+        result_23h = session.request_consumption_of_last_23_hours()
+        result_30d = session.request_consumption_of_last_30_days()
+        result_12m = session.request_consumption_of_last_12_months()
 
-        self.assertIsInstance(result, DummyConsumption30Days)
-        self.assertEqual([12.0], fake_device.timeouts_seen)
+        self.assertIsInstance(result_23h, DummyConsumption23Hours)
+        self.assertIsInstance(result_30d, DummyConsumption30Days)
+        self.assertIsInstance(result_12m, DummyConsumption12Months)
+        self.assertEqual(
+            [("23h", 12.0), ("30d", 12.0), ("12m", 12.0)],
+            fake_device.timeouts_seen,
+        )
         self.assertEqual(3.0, fake_device.timeout)
+
+    def test_disconnect_returns_false_instead_of_blocking_on_busy_ble_lock(self):
+        session = MODULE.Sem6000Session(
+            address="b3:00:00:00:30:43",
+            pin="0000",
+            timeout_seconds=3.0,
+            history_timeout_seconds=12.0,
+            debug=False,
+            log=SimpleNamespace(warning=lambda *args, **kwargs: None),
+        )
+
+        session._lock.acquire()
+        try:
+            self.assertFalse(session.disconnect(wait_timeout_seconds=0.01))
+        finally:
+            session._lock.release()
 
 
 class RpcQueueTests(unittest.TestCase):
