@@ -1,0 +1,40 @@
+# Exemple de configuracio per al bridge SEM6000 -> ThingsBoard.
+# Copia aquest fitxer a /etc/sem6000-bridge/config.toml i edita'l.
+
+active_device = "endoll_taula"
+
+[thingsboard]
+host = "mqtt.eu.thingsboard.cloud"
+gateway_access_token = "CHANGE_ME"
+client_id = "sem6000-rpi2b"
+tls_mode = "fallback"
+tls_port = 8883
+plain_port = 1883
+control_qos = 1
+telemetry_qos = 0
+keepalive = 30
+connect_timeout_seconds = 10
+
+[runtime]
+telemetry_interval_on_seconds = 1
+off_heartbeat_seconds = 30
+rpc_queue_size = 128
+enable_extended_measurements = false
+admin_rpc_enabled = false
+log_level = "INFO"
+sem6000_bluetooth_device = "hci0"
+sem6000_timeout_seconds = 3
+sem6000_history_timeout_seconds = 12
+sem6000_debug = false
+
+[devices.endoll_taula]
+address = "b3:00:00:00:30:43"
+pin = "0000"
+child_device_name = "sem6000-b30000003043"
+child_device_type = "Voltcraft SEM6000"
+
+[devices.endoll_cuina]
+address = "aa:bb:cc:dd:ee:ff"
+pin = "0000"
+child_device_name = "sem6000-cuina"
+child_device_type = "Voltcraft SEM6000"

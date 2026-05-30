@@ -1,3 +1,13 @@
 github1/
 github2/
 sem6000-thingsboard/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+codis/config/config.toml
+codis/config/*.local.toml
+*.log

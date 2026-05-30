@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import datetime as dt
 import json
 import logging
@@ -11,15 +12,26 @@ import threading
 import time
 from collections import deque
 from dataclasses import dataclass
-from typing import Any, Callable, Deque, Dict, Optional, Protocol
+from pathlib import Path
+from typing import Any, Callable, Deque, Dict, Mapping, Optional, Protocol
 
 try:
     import paho.mqtt.client as mqtt
 except ModuleNotFoundError:
     mqtt = None
 
-FIXED_SEM6000_DEVICE_ADDRESS = "b3:00:00:00:30:43"
-FIXED_THINGSBOARD_GATEWAY_ACCESS_TOKEN = "PgcsA0leXeslOFsDO2Lk"
+try:
+    import tomllib
+except ModuleNotFoundError:
+    tomllib = None
+
+DEFAULT_CONFIG_PATH = "/etc/sem6000-bridge/config.toml"
+DEFAULT_CHILD_DEVICE_TYPE = "Voltcraft SEM6000"
+DEFAULT_TB_HOST = "mqtt.eu.thingsboard.cloud"
+DEFAULT_TB_CLIENT_ID = "sem6000-rpi2b"
+DEFAULT_SEM6000_PIN = "0000"
+DEFAULT_SEM6000_TIMEOUT_SECONDS = 3.0
+DEFAULT_BLUETOOTH_DEVICE = "hci0"
 
 TOPIC_GATEWAY_CONNECT = "v1/gateway/connect"
 TOPIC_GATEWAY_DISCONNECT = "v1/gateway/disconnect"
@@ -890,26 +902,129 @@ class CommandError(Exception):
         self.code = code
 
 
-def parse_env_bool(name: str, default: bool) -> bool:
-    """Llegeix una variable d'entorn booleana reutilitzant el parser generic."""
-    raw_value = os.getenv(name)
-    if raw_value is None:
+def _env_get(env: Mapping[str, str], name: str) -> Optional[str]:
+    """Retorna una variable d'entorn normalitzada a string no buida."""
+    value = env.get(name)
+    if value is None:
+        return None
+    value = str(value).strip()
+    return value if value else None
+
+
+def _first_env(env: Mapping[str, str], *names: str) -> Optional[str]:
+    """Busca el primer nom d'entorn definit d'una llista de candidates."""
+    for name in names:
+        value = _env_get(env, name)
+        if value is not None:
+            return value
+    return None
+
+
+def _coalesce_config(*values: Any) -> Any:
+    """Retorna el primer valor de configuracio present, preservant false i zero."""
+    for value in values:
+        if value is not None:
+            return value
+    return None
+
+
+def _as_mapping(value: Any, field_name: str, *, required: bool) -> Dict[str, Any]:
+    """Valida que una seccio de configuracio sigui un objecte TOML."""
+    if value is None:
+        if required:
+            raise SystemExit(f"Falta la seccio [{field_name}] al fitxer de configuracio.")
+        return {}
+    if not isinstance(value, dict):
+        raise SystemExit(f"La seccio [{field_name}] ha de ser un objecte TOML.")
+    return value
+
+
+def _parse_bool_value(value: Any, field_name: str, default: bool) -> bool:
+    """Converteix un valor de configuracio a boolea amb error llegible."""
+    if value is None:
         return default
-    parsed = parse_boolean_value(raw_value)
+    parsed = parse_boolean_value(value)
     if parsed is None:
         raise SystemExit(
-            f"Valor invalid per {name}: {raw_value}. Usa true/false, on/off o 1/0."
+            f"Valor invalid per {field_name}: {value}. Usa true/false, on/off o 1/0."
         )
     return parsed
 
 
-def parse_env_qos(name: str, default: int) -> int:
-    """Valida que el QoS llegit de l'entorn sigui 0, 1 o 2."""
-    raw_value = os.getenv(name)
-    qos = default if raw_value is None else int(raw_value)
+def _parse_int_value(value: Any, field_name: str, default: int) -> int:
+    """Converteix un valor de configuracio a enter."""
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError) as exc:
+        raise SystemExit(f"Valor invalid per {field_name}: {value}.") from exc
+
+
+def _parse_float_value(value: Any, field_name: str, default: float) -> float:
+    """Converteix un valor de configuracio a float."""
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError) as exc:
+        raise SystemExit(f"Valor invalid per {field_name}: {value}.") from exc
+
+
+def _parse_qos_value(value: Any, field_name: str, default: int) -> int:
+    """Valida que el QoS sigui 0, 1 o 2."""
+    qos = _parse_int_value(value, field_name, default)
     if qos not in {0, 1, 2}:
-        raise SystemExit(f"Valor invalid per {name}: {qos}. Usa 0, 1 o 2.")
+        raise SystemExit(f"Valor invalid per {field_name}: {qos}. Usa 0, 1 o 2.")
     return qos
+
+
+def _required_str(value: Any, field_name: str) -> str:
+    """Valida un camp de configuracio obligatori de tipus string."""
+    parsed = str(value or "").strip()
+    if not parsed:
+        raise SystemExit(f"Falta el camp obligatori {field_name}.")
+    return parsed
+
+
+def _optional_str(value: Any, default: str) -> str:
+    """Retorna un string opcional amb default."""
+    parsed = str(value or "").strip()
+    return parsed if parsed else default
+
+
+def _load_toml_file(path: Path) -> Dict[str, Any]:
+    """Carrega un fitxer TOML amb errors orientats a operacio."""
+    if tomllib is None:
+        raise SystemExit("La configuracio TOML necessita Python 3.11 o superior.")
+    try:
+        with path.open("rb") as handle:
+            data = tomllib.load(handle)
+    except FileNotFoundError as exc:
+        raise SystemExit(f"No existeix el fitxer de configuracio: {path}") from exc
+    except OSError as exc:
+        raise SystemExit(f"No s'ha pogut llegir el fitxer de configuracio {path}: {exc}") from exc
+    except tomllib.TOMLDecodeError as exc:
+        raise SystemExit(f"TOML invalid a {path}: {exc}") from exc
+
+    if not isinstance(data, dict):
+        raise SystemExit(f"El fitxer de configuracio {path} ha de contenir un objecte TOML.")
+    return data
+
+
+def parse_env_bool(name: str, default: bool, env: Optional[Mapping[str, str]] = None) -> bool:
+    """Llegeix una variable d'entorn booleana reutilitzant el parser generic."""
+    source = os.environ if env is None else env
+    raw_value = source.get(name)
+    if raw_value is None:
+        return default
+    return _parse_bool_value(raw_value, name, default)
+
+
+def parse_env_qos(name: str, default: int, env: Optional[Mapping[str, str]] = None) -> int:
+    """Valida que el QoS llegit de l'entorn sigui 0, 1 o 2."""
+    source = os.environ if env is None else env
+    return _parse_qos_value(source.get(name), name, default)
 
 
 def build_gateway_connect_payload(device_name: str, device_type: str) -> Dict[str, Any]:
@@ -955,6 +1070,7 @@ class AppConfig:
 
     sem6000_device_address: str
     sem6000_pin: str
+    sem6000_bluetooth_device: str
     sem6000_timeout_seconds: float
     sem6000_history_timeout_seconds: float
     sem6000_debug: bool
@@ -974,39 +1090,334 @@ class AppConfig:
     rpc_queue_size: int
     mqtt_connect_timeout_seconds: float
     enable_extended_measurements: bool
+    admin_rpc_enabled: bool
     log_level: str
 
     @classmethod
-    def from_env(cls) -> "AppConfig":
-        tls_mode = os.getenv("THINGSBOARD_TLS_MODE", "fallback").strip().lower()
+    def from_sources(
+        cls,
+        config_path: Optional[str] = None,
+        env: Optional[Mapping[str, str]] = None,
+    ) -> "AppConfig":
+        """Carrega configuracio des de TOML si existeix, o nomes entorn com a fallback."""
+        source_env = os.environ if env is None else env
+        if config_path:
+            return cls.from_toml_file(Path(config_path), env=source_env)
+
+        default_path = Path(DEFAULT_CONFIG_PATH)
+        if default_path.exists():
+            return cls.from_toml_file(default_path, env=source_env)
+
+        return cls.from_env(env=source_env)
+
+    @classmethod
+    def from_toml_file(
+        cls,
+        path: Path,
+        env: Optional[Mapping[str, str]] = None,
+    ) -> "AppConfig":
+        """Carrega el bridge des d'un fitxer TOML i aplica overrides d'entorn."""
+        raw_config = _load_toml_file(path)
+        source_env = os.environ if env is None else env
+
+        thingsboard = _as_mapping(raw_config.get("thingsboard"), "thingsboard", required=True)
+        runtime = _as_mapping(raw_config.get("runtime"), "runtime", required=False)
+        devices = _as_mapping(raw_config.get("devices"), "devices", required=True)
+
+        active_device = _optional_str(
+            _first_env(source_env, "SEM6000_ACTIVE_DEVICE"),
+            _optional_str(raw_config.get("active_device"), ""),
+        )
+        if not active_device:
+            raise SystemExit("Falta el camp obligatori active_device.")
+
+        active_device_config = devices.get(active_device)
+        if not isinstance(active_device_config, dict):
+            available = ", ".join(sorted(str(name) for name in devices)) or "(cap)"
+            raise SystemExit(
+                f"L'active_device '{active_device}' no existeix a [devices]. "
+                f"Disponibles: {available}."
+            )
+
+        device_address = _required_str(
+            _coalesce_config(
+                _first_env(source_env, "SEM6000_DEVICE_ADDRESS"),
+                active_device_config.get("address"),
+            ),
+            f"devices.{active_device}.address",
+        )
+        child_name = _optional_str(
+            _coalesce_config(
+                _first_env(source_env, "THINGSBOARD_CHILD_DEVICE_NAME"),
+                active_device_config.get("child_device_name"),
+            ),
+            default_child_device_name(device_address),
+        )
+        child_type = _optional_str(
+            _coalesce_config(
+                _first_env(source_env, "THINGSBOARD_CHILD_DEVICE_TYPE"),
+                active_device_config.get("child_device_type"),
+            ),
+            DEFAULT_CHILD_DEVICE_TYPE,
+        )
+
+        access_token = _required_str(
+            _coalesce_config(
+                _first_env(
+                    source_env,
+                    "THINGSBOARD_GATEWAY_ACCESS_TOKEN",
+                    "THINGSBOARD_ACCESS_TOKEN",
+                ),
+                thingsboard.get("gateway_access_token"),
+            ),
+            "thingsboard.gateway_access_token",
+        )
+
+        tls_mode = _optional_str(
+            _coalesce_config(
+                _first_env(source_env, "THINGSBOARD_TLS_MODE"),
+                thingsboard.get("tls_mode"),
+            ),
+            "fallback",
+        ).lower()
         if tls_mode not in {"required", "disabled", "fallback"}:
             raise SystemExit(
                 "THINGSBOARD_TLS_MODE invalid. Valors permesos: required, disabled, fallback."
             )
 
-        device_address = FIXED_SEM6000_DEVICE_ADDRESS
-        child_name = os.getenv(
-            "THINGSBOARD_CHILD_DEVICE_NAME",
-            default_child_device_name(device_address),
-        ).strip()
-        child_type = os.getenv(
-            "THINGSBOARD_CHILD_DEVICE_TYPE",
-            "Voltcraft SEM6000",
-        ).strip()
-
-        access_token = FIXED_THINGSBOARD_GATEWAY_ACCESS_TOKEN
-
-        telemetry_interval_on = float(
-            os.getenv("TELEMETRY_INTERVAL_ON_SECONDS", "1")
+        telemetry_interval_on = _parse_float_value(
+            _coalesce_config(
+                _first_env(source_env, "TELEMETRY_INTERVAL_ON_SECONDS"),
+                active_device_config.get("telemetry_interval_on_seconds"),
+                runtime.get("telemetry_interval_on_seconds"),
+            ),
+            "telemetry_interval_on_seconds",
+            1.0,
         )
         if telemetry_interval_on <= 0:
             raise SystemExit("TELEMETRY_INTERVAL_ON_SECONDS ha de ser > 0.")
 
-        off_heartbeat = float(os.getenv("OFF_HEARTBEAT_SECONDS", "30"))
+        off_heartbeat = _parse_float_value(
+            _coalesce_config(
+                _first_env(source_env, "OFF_HEARTBEAT_SECONDS"),
+                active_device_config.get("off_heartbeat_seconds"),
+                runtime.get("off_heartbeat_seconds"),
+            ),
+            "off_heartbeat_seconds",
+            30.0,
+        )
         if off_heartbeat <= 0:
             raise SystemExit("OFF_HEARTBEAT_SECONDS ha de ser > 0.")
 
-        queue_size = int(os.getenv("RPC_QUEUE_SIZE", "128"))
+        queue_size = _parse_int_value(
+            _coalesce_config(
+                _first_env(source_env, "RPC_QUEUE_SIZE"),
+                runtime.get("rpc_queue_size"),
+            ),
+            "rpc_queue_size",
+            128,
+        )
+        if queue_size <= 0:
+            raise SystemExit("RPC_QUEUE_SIZE ha de ser > 0.")
+
+        if not child_name:
+            raise SystemExit("THINGSBOARD_CHILD_DEVICE_NAME no pot ser buit.")
+        if not child_type:
+            raise SystemExit("THINGSBOARD_CHILD_DEVICE_TYPE no pot ser buit.")
+
+        timeout_seconds = _parse_float_value(
+            _coalesce_config(
+                _first_env(source_env, "SEM6000_TIMEOUT_SECONDS"),
+                active_device_config.get("timeout_seconds"),
+                runtime.get("sem6000_timeout_seconds"),
+            ),
+            "sem6000_timeout_seconds",
+            DEFAULT_SEM6000_TIMEOUT_SECONDS,
+        )
+        history_timeout_seconds = _parse_float_value(
+            _coalesce_config(
+                _first_env(source_env, "SEM6000_HISTORY_TIMEOUT_SECONDS"),
+                active_device_config.get("history_timeout_seconds"),
+                runtime.get("sem6000_history_timeout_seconds"),
+            ),
+            "sem6000_history_timeout_seconds",
+            DEFAULT_HISTORY_TIMEOUT_SECONDS,
+        )
+
+        return cls(
+            sem6000_device_address=device_address,
+            sem6000_pin=_optional_str(
+                _coalesce_config(
+                    _first_env(source_env, "SEM6000_PIN"),
+                    active_device_config.get("pin"),
+                ),
+                DEFAULT_SEM6000_PIN,
+            ),
+            sem6000_bluetooth_device=_optional_str(
+                _coalesce_config(
+                    _first_env(source_env, "SEM6000_BLUETOOTH_DEVICE"),
+                    active_device_config.get("bluetooth_device"),
+                    runtime.get("sem6000_bluetooth_device"),
+                ),
+                DEFAULT_BLUETOOTH_DEVICE,
+            ),
+            sem6000_timeout_seconds=timeout_seconds,
+            sem6000_history_timeout_seconds=history_timeout_seconds,
+            sem6000_debug=_parse_bool_value(
+                _coalesce_config(
+                    _first_env(source_env, "SEM6000_DEBUG"),
+                    active_device_config.get("debug"),
+                    runtime.get("sem6000_debug"),
+                ),
+                "sem6000_debug",
+                False,
+            ),
+            tb_host=_optional_str(
+                _coalesce_config(
+                    _first_env(source_env, "THINGSBOARD_MQTT_HOST"),
+                    thingsboard.get("host"),
+                ),
+                DEFAULT_TB_HOST,
+            ),
+            tb_gateway_access_token=access_token,
+            tb_client_id=_optional_str(
+                _coalesce_config(
+                    _first_env(source_env, "THINGSBOARD_CLIENT_ID"),
+                    thingsboard.get("client_id"),
+                ),
+                DEFAULT_TB_CLIENT_ID,
+            ),
+            tb_control_qos=_parse_qos_value(
+                _coalesce_config(
+                    _first_env(source_env, "THINGSBOARD_CONTROL_QOS"),
+                    thingsboard.get("control_qos"),
+                ),
+                "thingsboard.control_qos",
+                1,
+            ),
+            tb_telemetry_qos=_parse_qos_value(
+                _coalesce_config(
+                    _first_env(source_env, "THINGSBOARD_TELEMETRY_QOS"),
+                    thingsboard.get("telemetry_qos"),
+                ),
+                "thingsboard.telemetry_qos",
+                0,
+            ),
+            tb_keepalive=_parse_int_value(
+                _coalesce_config(
+                    _first_env(source_env, "THINGSBOARD_KEEPALIVE"),
+                    thingsboard.get("keepalive"),
+                ),
+                "thingsboard.keepalive",
+                30,
+            ),
+            tb_tls_mode=tls_mode,
+            tb_tls_port=_parse_int_value(
+                _coalesce_config(
+                    _first_env(source_env, "THINGSBOARD_MQTT_PORT_TLS"),
+                    thingsboard.get("tls_port"),
+                ),
+                "thingsboard.tls_port",
+                8883,
+            ),
+            tb_plain_port=_parse_int_value(
+                _coalesce_config(
+                    _first_env(source_env, "THINGSBOARD_MQTT_PORT_PLAIN"),
+                    thingsboard.get("plain_port"),
+                ),
+                "thingsboard.plain_port",
+                1883,
+            ),
+            tb_child_device_name=child_name,
+            tb_child_device_type=child_type,
+            telemetry_interval_on_seconds=telemetry_interval_on,
+            off_heartbeat_seconds=off_heartbeat,
+            rpc_queue_size=queue_size,
+            mqtt_connect_timeout_seconds=_parse_float_value(
+                _coalesce_config(
+                    _first_env(source_env, "MQTT_CONNECT_TIMEOUT_SECONDS"),
+                    thingsboard.get("connect_timeout_seconds"),
+                    runtime.get("mqtt_connect_timeout_seconds"),
+                ),
+                "mqtt_connect_timeout_seconds",
+                10.0,
+            ),
+            enable_extended_measurements=_parse_bool_value(
+                _coalesce_config(
+                    _first_env(source_env, "ENABLE_EXTENDED_MEASUREMENTS"),
+                    active_device_config.get("enable_extended_measurements"),
+                    runtime.get("enable_extended_measurements"),
+                ),
+                "enable_extended_measurements",
+                False,
+            ),
+            admin_rpc_enabled=_parse_bool_value(
+                _coalesce_config(
+                    _first_env(source_env, "ADMIN_RPC_ENABLED"),
+                    active_device_config.get("admin_rpc_enabled"),
+                    runtime.get("admin_rpc_enabled"),
+                ),
+                "admin_rpc_enabled",
+                False,
+            ),
+            log_level=_optional_str(
+                _coalesce_config(
+                    _first_env(source_env, "LOG_LEVEL"),
+                    runtime.get("log_level"),
+                ),
+                "INFO",
+            ),
+        )
+
+    @classmethod
+    def from_env(cls, env: Optional[Mapping[str, str]] = None) -> "AppConfig":
+        source_env = os.environ if env is None else env
+
+        tls_mode = _optional_str(source_env.get("THINGSBOARD_TLS_MODE"), "fallback").lower()
+        if tls_mode not in {"required", "disabled", "fallback"}:
+            raise SystemExit(
+                "THINGSBOARD_TLS_MODE invalid. Valors permesos: required, disabled, fallback."
+            )
+
+        device_address = _required_str(
+            _first_env(source_env, "SEM6000_DEVICE_ADDRESS"),
+            "SEM6000_DEVICE_ADDRESS",
+        )
+        child_name = _optional_str(
+            _first_env(source_env, "THINGSBOARD_CHILD_DEVICE_NAME"),
+            default_child_device_name(device_address),
+        )
+        child_type = _optional_str(
+            _first_env(source_env, "THINGSBOARD_CHILD_DEVICE_TYPE"),
+            DEFAULT_CHILD_DEVICE_TYPE,
+        )
+
+        access_token = _required_str(
+            _first_env(
+                source_env,
+                "THINGSBOARD_GATEWAY_ACCESS_TOKEN",
+                "THINGSBOARD_ACCESS_TOKEN",
+            ),
+            "THINGSBOARD_GATEWAY_ACCESS_TOKEN",
+        )
+
+        telemetry_interval_on = _parse_float_value(
+            source_env.get("TELEMETRY_INTERVAL_ON_SECONDS"),
+            "TELEMETRY_INTERVAL_ON_SECONDS",
+            1.0,
+        )
+        if telemetry_interval_on <= 0:
+            raise SystemExit("TELEMETRY_INTERVAL_ON_SECONDS ha de ser > 0.")
+
+        off_heartbeat = _parse_float_value(
+            source_env.get("OFF_HEARTBEAT_SECONDS"),
+            "OFF_HEARTBEAT_SECONDS",
+            30.0,
+        )
+        if off_heartbeat <= 0:
+            raise SystemExit("OFF_HEARTBEAT_SECONDS ha de ser > 0.")
+
+        queue_size = _parse_int_value(source_env.get("RPC_QUEUE_SIZE"), "RPC_QUEUE_SIZE", 128)
         if queue_size <= 0:
             raise SystemExit("RPC_QUEUE_SIZE ha de ser > 0.")
         if not child_name:
@@ -1016,36 +1427,64 @@ class AppConfig:
 
         return cls(
             sem6000_device_address=device_address,
-            sem6000_pin=os.getenv("SEM6000_PIN", "0000").strip(),
-            sem6000_timeout_seconds=float(os.getenv("SEM6000_TIMEOUT_SECONDS", "3")),
-            sem6000_history_timeout_seconds=float(
-                os.getenv(
-                    "SEM6000_HISTORY_TIMEOUT_SECONDS",
-                    str(DEFAULT_HISTORY_TIMEOUT_SECONDS),
-                )
+            sem6000_pin=_optional_str(source_env.get("SEM6000_PIN"), DEFAULT_SEM6000_PIN),
+            sem6000_bluetooth_device=_optional_str(
+                source_env.get("SEM6000_BLUETOOTH_DEVICE"),
+                DEFAULT_BLUETOOTH_DEVICE,
             ),
-            sem6000_debug=parse_env_bool("SEM6000_DEBUG", False),
-            tb_host=os.getenv("THINGSBOARD_MQTT_HOST", "mqtt.eu.thingsboard.cloud").strip(),
+            sem6000_timeout_seconds=_parse_float_value(
+                source_env.get("SEM6000_TIMEOUT_SECONDS"),
+                "SEM6000_TIMEOUT_SECONDS",
+                DEFAULT_SEM6000_TIMEOUT_SECONDS,
+            ),
+            sem6000_history_timeout_seconds=_parse_float_value(
+                source_env.get("SEM6000_HISTORY_TIMEOUT_SECONDS"),
+                "SEM6000_HISTORY_TIMEOUT_SECONDS",
+                DEFAULT_HISTORY_TIMEOUT_SECONDS,
+            ),
+            sem6000_debug=parse_env_bool("SEM6000_DEBUG", False, env=source_env),
+            tb_host=_optional_str(source_env.get("THINGSBOARD_MQTT_HOST"), DEFAULT_TB_HOST),
             tb_gateway_access_token=access_token,
-            tb_client_id=os.getenv("THINGSBOARD_CLIENT_ID", "sem6000-rpi2b").strip(),
-            tb_control_qos=parse_env_qos("THINGSBOARD_CONTROL_QOS", 1),
-            tb_telemetry_qos=parse_env_qos("THINGSBOARD_TELEMETRY_QOS", 0),
-            tb_keepalive=int(os.getenv("THINGSBOARD_KEEPALIVE", "30")),
+            tb_client_id=_optional_str(source_env.get("THINGSBOARD_CLIENT_ID"), DEFAULT_TB_CLIENT_ID),
+            tb_control_qos=parse_env_qos("THINGSBOARD_CONTROL_QOS", 1, env=source_env),
+            tb_telemetry_qos=parse_env_qos("THINGSBOARD_TELEMETRY_QOS", 0, env=source_env),
+            tb_keepalive=_parse_int_value(
+                source_env.get("THINGSBOARD_KEEPALIVE"),
+                "THINGSBOARD_KEEPALIVE",
+                30,
+            ),
             tb_tls_mode=tls_mode,
-            tb_tls_port=int(os.getenv("THINGSBOARD_MQTT_PORT_TLS", "8883")),
-            tb_plain_port=int(os.getenv("THINGSBOARD_MQTT_PORT_PLAIN", "1883")),
+            tb_tls_port=_parse_int_value(
+                source_env.get("THINGSBOARD_MQTT_PORT_TLS"),
+                "THINGSBOARD_MQTT_PORT_TLS",
+                8883,
+            ),
+            tb_plain_port=_parse_int_value(
+                source_env.get("THINGSBOARD_MQTT_PORT_PLAIN"),
+                "THINGSBOARD_MQTT_PORT_PLAIN",
+                1883,
+            ),
             tb_child_device_name=child_name,
             tb_child_device_type=child_type,
             telemetry_interval_on_seconds=telemetry_interval_on,
             off_heartbeat_seconds=off_heartbeat,
             rpc_queue_size=queue_size,
-            mqtt_connect_timeout_seconds=float(
-                os.getenv("MQTT_CONNECT_TIMEOUT_SECONDS", "10")
+            mqtt_connect_timeout_seconds=_parse_float_value(
+                source_env.get("MQTT_CONNECT_TIMEOUT_SECONDS"),
+                "MQTT_CONNECT_TIMEOUT_SECONDS",
+                10.0,
             ),
             enable_extended_measurements=parse_env_bool(
-                "ENABLE_EXTENDED_MEASUREMENTS", False
+                "ENABLE_EXTENDED_MEASUREMENTS",
+                False,
+                env=source_env,
             ),
-            log_level=os.getenv("LOG_LEVEL", "INFO").strip(),
+            admin_rpc_enabled=parse_env_bool(
+                "ADMIN_RPC_ENABLED",
+                False,
+                env=source_env,
+            ),
+            log_level=_optional_str(source_env.get("LOG_LEVEL"), "INFO"),
         )
 
 
@@ -1176,10 +1615,12 @@ class Sem6000Session:
         history_timeout_seconds: float,
         debug: bool,
         log: logging.Logger,
+        bluetooth_device: str = DEFAULT_BLUETOOTH_DEVICE,
         stop_event: Optional[threading.Event] = None,
     ) -> None:
         self._address = address
         self._pin = pin
+        self._bluetooth_device = bluetooth_device
         self._timeout_seconds = timeout_seconds
         self._history_timeout_seconds = max(history_timeout_seconds, timeout_seconds)
         self._debug = debug
@@ -1313,6 +1754,7 @@ class Sem6000Session:
         device = sem6000_mod.SEM6000(
             deviceAddr=self._address,
             pin=self._pin,
+            bluetooth_device=self._bluetooth_device,
             timeout=self._timeout_seconds,
             debug=self._debug,
         )
@@ -2400,6 +2842,7 @@ class MqttSem6000Agent:
             history_timeout_seconds=config.sem6000_history_timeout_seconds,
             debug=config.sem6000_debug,
             log=self._log,
+            bluetooth_device=config.sem6000_bluetooth_device,
             stop_event=self._stop_event,
         )
 
@@ -2432,7 +2875,8 @@ class MqttSem6000Agent:
         self._registry.register(RandomModeHandler())
         self._registry.register(ScheduleHandler())
         self._registry.register(ConsumptionHandler())
-        self._registry.register(AdministrativeHandler())
+        if config.admin_rpc_enabled:
+            self._registry.register(AdministrativeHandler())
 
     def _build_client(self, use_tls: bool) -> mqtt.Client:
         if hasattr(mqtt, "CallbackAPIVersion"):
@@ -2879,12 +3323,150 @@ def install_signal_handlers(agent: MqttSem6000Agent) -> None:
             continue
 
 
-def main() -> int:
-    config = AppConfig.from_env()
+def build_arg_parser() -> argparse.ArgumentParser:
+    """Defineix la CLI operativa del bridge."""
+    parser = argparse.ArgumentParser(
+        description="Bridge MQTT gateway entre un Voltcraft SEM6000 i ThingsBoard.",
+    )
+    parser.add_argument(
+        "--config",
+        help=(
+            "Fitxer TOML de configuracio. Si s'omet, s'intenta "
+            f"{DEFAULT_CONFIG_PATH} i despres variables d'entorn."
+        ),
+    )
+    parser.add_argument(
+        "--check-config",
+        action="store_true",
+        help="Valida la configuracio i surt sense connectar BLE ni MQTT.",
+    )
+    parser.add_argument(
+        "--discover",
+        action="store_true",
+        help="Escaneja dispositius SEM6000 visibles per BLE i surt.",
+    )
+    parser.add_argument(
+        "--discover-timeout",
+        type=float,
+        default=5.0,
+        help="Segons d'escaneig BLE per --discover.",
+    )
+    parser.add_argument(
+        "--bluetooth-device",
+        help="Adaptador BLE per --discover, per exemple hci0.",
+    )
+    return parser
+
+
+def build_config_summary(config: AppConfig) -> Dict[str, Any]:
+    """Retorna una vista segura de la configuracio carregada."""
+    return {
+        "sem6000_device_address": config.sem6000_device_address,
+        "sem6000_bluetooth_device": config.sem6000_bluetooth_device,
+        "tb_host": config.tb_host,
+        "tb_client_id": config.tb_client_id,
+        "tb_gateway_access_token": MqttSem6000Agent._mask_token(
+            config.tb_gateway_access_token
+        ),
+        "tb_tls_mode": config.tb_tls_mode,
+        "tb_child_device_name": config.tb_child_device_name,
+        "tb_child_device_type": config.tb_child_device_type,
+        "telemetry_interval_on_seconds": config.telemetry_interval_on_seconds,
+        "off_heartbeat_seconds": config.off_heartbeat_seconds,
+        "enable_extended_measurements": config.enable_extended_measurements,
+        "admin_rpc_enabled": config.admin_rpc_enabled,
+    }
+
+
+def print_config_summary(config: AppConfig) -> None:
+    """Mostra una validacio curta apta per usar amb systemd o terminal."""
+    print("Configuracio SEM6000 bridge OK:")
+    for key, value in build_config_summary(config).items():
+        print(f"- {key}: {value}")
+
+
+def bluetooth_device_hint_from_toml(path: Path) -> str:
+    """Llegeix nomes l'adaptador BLE d'un TOML, sense validar MQTT."""
+    raw_config = _load_toml_file(path)
+    runtime = raw_config.get("runtime")
+    if isinstance(runtime, dict):
+        bluetooth_device = _optional_str(
+            runtime.get("sem6000_bluetooth_device"),
+            "",
+        )
+        if bluetooth_device:
+            return bluetooth_device
+
+    active_device = _optional_str(raw_config.get("active_device"), "")
+    devices = raw_config.get("devices")
+    if active_device and isinstance(devices, dict):
+        active_device_config = devices.get(active_device)
+        if isinstance(active_device_config, dict):
+            bluetooth_device = _optional_str(
+                active_device_config.get("bluetooth_device"),
+                "",
+            )
+            if bluetooth_device:
+                return bluetooth_device
+
+    return DEFAULT_BLUETOOTH_DEVICE
+
+
+def run_discover(timeout_seconds: float, bluetooth_device: str) -> int:
+    """Escaneja SEM6000 visibles sense arrencar l'agent MQTT."""
+    try:
+        import usa_sem6000 as sem_module
+    except BaseException as exc:
+        print(f"No s'ha pogut importar usa_sem6000: {exc}")
+        return 1
+
+    try:
+        devices = sem_module.sem6000.SEM6000.discover(
+            timeout=timeout_seconds,
+            bluetooth_device=bluetooth_device,
+        )
+    except Exception as exc:
+        print(f"No s'ha pogut fer l'escaneig BLE: {exc}")
+        return 1
+
+    if not devices:
+        print("No s'ha trobat cap SEM6000.")
+        return 0
+
+    print("Dispositius SEM6000 trobats:")
+    for device in devices:
+        address = getattr(device, "addr", None) or getattr(device, "address", None)
+        name = getattr(device, "name", None) or getattr(device, "localName", None)
+        rssi = getattr(device, "rssi", None)
+        parts = [str(address or device)]
+        if name:
+            parts.append(f"name={name}")
+        if rssi is not None:
+            parts.append(f"rssi={rssi}")
+        print("- " + " ".join(parts))
+    return 0
+
+
+def main(argv: Optional[list[str]] = None) -> int:
+    parser = build_arg_parser()
+    args = parser.parse_args(argv)
+
+    if args.discover:
+        bluetooth_device = args.bluetooth_device or DEFAULT_BLUETOOTH_DEVICE
+        if args.config and args.bluetooth_device is None:
+            bluetooth_device = bluetooth_device_hint_from_toml(Path(args.config))
+        return run_discover(args.discover_timeout, bluetooth_device)
+
+    config = AppConfig.from_sources(args.config)
     logging.basicConfig(
         level=getattr(logging, config.log_level.upper(), logging.INFO),
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
+
+    if args.check_config:
+        print_config_summary(config)
+        return 0
+
     agent = MqttSem6000Agent(config)
     install_signal_handlers(agent)
     try:

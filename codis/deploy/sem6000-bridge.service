@@ -1,0 +1,19 @@
+[Unit]
+Description=SEM6000 ThingsBoard MQTT bridge
+Wants=network-online.target bluetooth.service
+After=network-online.target bluetooth.service
+
+[Service]
+Type=simple
+User=pau
+Group=pau
+SupplementaryGroups=bluetooth
+WorkingDirectory=/home/pau/Codis
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/pau/Codis/.venv/bin/python /home/pau/Codis/codis/usa_sem6000_thingsboard_mqtt.py --config /etc/sem6000-bridge/config.toml
+Restart=always
+RestartSec=10
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target

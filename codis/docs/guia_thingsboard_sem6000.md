@@ -1,12 +1,14 @@
 # Guia operativa de ThingsBoard per al bridge MQTT SEM6000
 
-Data de l'actualitzacio: 2026-04-29
+Data de l'actualitzacio: 2026-05-30
 
 Aquest document resumeix, des del punt de vista de ThingsBoard, tot el que avui es pot fer amb `codis/usa_sem6000_thingsboard_mqtt.py` i quines configuracions exactes s'han de posar als widgets, dashboards o proves RPC.
 
 ## 1. Configuracio efectiva del bridge
 
-Els valors seguents son els que fa servir el bridge si no s'han sobreescrit variables d'entorn:
+El bridge carrega preferentment `/etc/sem6000-bridge/config.toml`. Si no existeix,
+pot continuar funcionant amb variables d'entorn equivalents. Els valors seguents
+son els defaults funcionals o exemples del fitxer `sem6000-bridge.example.toml`:
 
 | Camp | Valor per defecte |
 | --- | --- |
@@ -14,10 +16,10 @@ Els valors seguents son els que fa servir el bridge si no s'han sobreescrit vari
 | Port TLS | `8883` |
 | Port plain | `1883` |
 | Mode TLS | `fallback` |
-| Access token del gateway | `PgcsA0leXeslOFsDO2Lk` |
+| Access token del gateway | definit a `thingsboard.gateway_access_token` |
 | MQTT client id del gateway | `sem6000-rpi2b` |
-| Device address del SEM6000 | `b3:00:00:00:30:43` |
-| Nom del dispositiu fill | `sem6000-b30000003043` |
+| Device address del SEM6000 | definit a `[devices.<active_device>].address` |
+| Nom del dispositiu fill | definit a config o derivat de la MAC |
 | Tipus del dispositiu fill | `Voltcraft SEM6000` |
 | Interval de telemetria amb endoll actiu | `1` segon |
 | Heartbeat amb endoll apagat | `30` segons |
@@ -26,6 +28,11 @@ Els valors seguents son els que fa servir el bridge si no s'han sobreescrit vari
 
 Variables que poden canviar aquests valors:
 
+- `SEM6000_ACTIVE_DEVICE`
+- `SEM6000_DEVICE_ADDRESS`
+- `SEM6000_PIN`
+- `SEM6000_BLUETOOTH_DEVICE`
+- `THINGSBOARD_GATEWAY_ACCESS_TOKEN`
 - `THINGSBOARD_MQTT_HOST`
 - `THINGSBOARD_CLIENT_ID`
 - `THINGSBOARD_CHILD_DEVICE_NAME`
@@ -38,6 +45,7 @@ Variables que poden canviar aquests valors:
 - `TELEMETRY_INTERVAL_ON_SECONDS`
 - `OFF_HEARTBEAT_SECONDS`
 - `ENABLE_EXTENDED_MEASUREMENTS`
+- `ADMIN_RPC_ENABLED`
 
 ## 2. Que surt a ThingsBoard
 
@@ -88,14 +96,14 @@ Regla practica:
 Abans de crear widgets, deixa resolts aquests punts:
 
 1. Crea o obre un dashboard i entra en mode edicio.
-2. Crea un alias `sem6000_device` de tipus `Single entity` apuntant al dispositiu fill `sem6000-b30000003043`, o al nom real definit a `THINGSBOARD_CHILD_DEVICE_NAME`.
-3. Crea un alias `sem6000_gateway` de tipus `Single entity` apuntant al dispositiu gateway autenticat amb el token `PgcsA0leXeslOFsDO2Lk`.
+2. Crea un alias `sem6000_device` de tipus `Single entity` apuntant al dispositiu fill definit per `child_device_name`, o al nom derivat de la MAC si no l'has fixat.
+3. Crea un alias `sem6000_gateway` de tipus `Single entity` apuntant al dispositiu gateway autenticat amb el token MQTT configurat.
 4. Desa els aliases abans d'afegir widgets.
 
 Com identificar el gateway correcte si no recordes el nom:
 
 - Busca el dispositiu que tingui atributs com `bridge=raspberry-sem6000-gw`.
-- Comprova que tambe hi surtin `child_device_name=sem6000-b30000003043` i `child_device_type=Voltcraft SEM6000`.
+- Comprova que tambe hi surtin `child_device_name=<nom configurat>` i `child_device_type=Voltcraft SEM6000`.
 
 ### 3.2 Regles de configuracio que et faran estalviar temps
 

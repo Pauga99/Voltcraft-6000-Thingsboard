@@ -1,9 +1,11 @@
 import importlib.util
 import logging
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
 
 MODULE_PATH = (
@@ -638,6 +640,194 @@ class RpcQueueTests(unittest.TestCase):
         self.assertEqual([first], dropped)
 
         self.assertEqual(second, queue.get(timeout=0.01))
+
+
+class AppConfigTests(unittest.TestCase):
+    def _write_config(self, text):
+        temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(temp_dir.cleanup)
+        path = Path(temp_dir.name) / "config.toml"
+        path.write_text(text, encoding="utf-8")
+        return path
+
+    def test_loads_toml_config_for_active_device(self):
+        path = self._write_config(
+            """
+active_device = "endoll_taula"
+
+[thingsboard]
+host = "mqtt.example.test"
+gateway_access_token = "secret-token"
+client_id = "bridge-test"
+tls_mode = "required"
+
+[runtime]
+telemetry_interval_on_seconds = 2
+off_heartbeat_seconds = 40
+enable_extended_measurements = true
+admin_rpc_enabled = true
+
+[devices.endoll_taula]
+address = "aa:bb:cc:dd:ee:ff"
+pin = "1234"
+bluetooth_device = "hci1"
+child_device_name = "sem6000-taula"
+child_device_type = "SEM Test"
+"""
+        )
+
+        config = MODULE.AppConfig.from_toml_file(path, env={})
+
+        self.assertEqual("aa:bb:cc:dd:ee:ff", config.sem6000_device_address)
+        self.assertEqual("1234", config.sem6000_pin)
+        self.assertEqual("hci1", config.sem6000_bluetooth_device)
+        self.assertEqual("mqtt.example.test", config.tb_host)
+        self.assertEqual("secret-token", config.tb_gateway_access_token)
+        self.assertEqual("bridge-test", config.tb_client_id)
+        self.assertEqual("required", config.tb_tls_mode)
+        self.assertEqual("sem6000-taula", config.tb_child_device_name)
+        self.assertEqual("SEM Test", config.tb_child_device_type)
+        self.assertEqual(2.0, config.telemetry_interval_on_seconds)
+        self.assertEqual(40.0, config.off_heartbeat_seconds)
+        self.assertTrue(config.enable_extended_measurements)
+        self.assertTrue(config.admin_rpc_enabled)
+
+    def test_toml_config_rejects_missing_active_device(self):
+        path = self._write_config(
+            """
+active_device = "cuina"
+
+[thingsboard]
+gateway_access_token = "secret-token"
+
+[devices.taulell]
+address = "aa:bb:cc:dd:ee:ff"
+"""
+        )
+
+        with self.assertRaises(SystemExit) as ctx:
+            MODULE.AppConfig.from_toml_file(path, env={})
+
+        self.assertIn("active_device 'cuina' no existeix", str(ctx.exception))
+
+    def test_toml_config_derives_child_name_when_missing(self):
+        path = self._write_config(
+            """
+active_device = "endoll"
+
+[thingsboard]
+gateway_access_token = "secret-token"
+
+[devices.endoll]
+address = "aa:bb:cc:dd:ee:ff"
+"""
+        )
+
+        config = MODULE.AppConfig.from_toml_file(path, env={})
+
+        self.assertEqual("sem6000-aabbccddeeff", config.tb_child_device_name)
+        self.assertEqual(MODULE.DEFAULT_CHILD_DEVICE_TYPE, config.tb_child_device_type)
+
+    def test_from_env_supports_configless_runtime(self):
+        config = MODULE.AppConfig.from_env(
+            env={
+                "SEM6000_DEVICE_ADDRESS": "aa:bb:cc:dd:ee:ff",
+                "THINGSBOARD_GATEWAY_ACCESS_TOKEN": "env-token",
+            }
+        )
+
+        self.assertEqual("aa:bb:cc:dd:ee:ff", config.sem6000_device_address)
+        self.assertEqual("env-token", config.tb_gateway_access_token)
+        self.assertEqual("sem6000-aabbccddeeff", config.tb_child_device_name)
+        self.assertFalse(config.admin_rpc_enabled)
+
+    def test_environment_overrides_toml_values(self):
+        path = self._write_config(
+            """
+active_device = "endoll"
+
+[thingsboard]
+gateway_access_token = "file-token"
+
+[devices.endoll]
+address = "aa:bb:cc:dd:ee:ff"
+child_device_name = "file-child"
+"""
+        )
+
+        config = MODULE.AppConfig.from_toml_file(
+            path,
+            env={
+                "SEM6000_DEVICE_ADDRESS": "11:22:33:44:55:66",
+                "THINGSBOARD_GATEWAY_ACCESS_TOKEN": "env-token",
+                "THINGSBOARD_CHILD_DEVICE_NAME": "env-child",
+                "ADMIN_RPC_ENABLED": "true",
+            },
+        )
+
+        self.assertEqual("11:22:33:44:55:66", config.sem6000_device_address)
+        self.assertEqual("env-token", config.tb_gateway_access_token)
+        self.assertEqual("env-child", config.tb_child_device_name)
+        self.assertTrue(config.admin_rpc_enabled)
+
+    def test_device_false_values_override_runtime_true_values(self):
+        path = self._write_config(
+            """
+active_device = "endoll"
+
+[thingsboard]
+gateway_access_token = "secret-token"
+
+[runtime]
+enable_extended_measurements = true
+admin_rpc_enabled = true
+
+[devices.endoll]
+address = "aa:bb:cc:dd:ee:ff"
+enable_extended_measurements = false
+admin_rpc_enabled = false
+"""
+        )
+
+        config = MODULE.AppConfig.from_toml_file(path, env={})
+
+        self.assertFalse(config.enable_extended_measurements)
+        self.assertFalse(config.admin_rpc_enabled)
+
+    def test_discover_bluetooth_hint_does_not_require_thingsboard_config(self):
+        path = self._write_config(
+            """
+active_device = "endoll"
+
+[runtime]
+sem6000_bluetooth_device = "hci2"
+
+[devices.endoll]
+address = "aa:bb:cc:dd:ee:ff"
+"""
+        )
+
+        self.assertEqual("hci2", MODULE.bluetooth_device_hint_from_toml(path))
+
+    def test_check_config_does_not_start_agent(self):
+        path = self._write_config(
+            """
+active_device = "endoll"
+
+[thingsboard]
+gateway_access_token = "secret-token"
+
+[devices.endoll]
+address = "aa:bb:cc:dd:ee:ff"
+"""
+        )
+
+        with mock.patch.object(MODULE, "MqttSem6000Agent") as agent_cls:
+            with mock.patch("builtins.print"):
+                result = MODULE.main(["--config", str(path), "--check-config"])
+
+        self.assertEqual(0, result)
+        agent_cls.assert_not_called()
 
 
 class MappingAndRegistryTests(unittest.TestCase):
