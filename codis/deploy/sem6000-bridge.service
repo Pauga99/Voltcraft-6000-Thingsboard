@@ -5,12 +5,12 @@ After=network-online.target bluetooth.service
 
 [Service]
 Type=simple
-User=pau
-Group=pau
+User=sem6000
+Group=sem6000
 SupplementaryGroups=bluetooth
-WorkingDirectory=/home/pau/Codis
+WorkingDirectory=/opt/sem6000-bridge
 Environment=PYTHONUNBUFFERED=1
-ExecStart=/home/pau/Codis/.venv/bin/python /home/pau/Codis/codis/usa_sem6000_thingsboard_mqtt.py --config /etc/sem6000-bridge/config.toml
+ExecStart=/opt/sem6000-bridge/.venv/bin/python /opt/sem6000-bridge/codis/usa_sem6000_thingsboard_mqtt.py --config /etc/sem6000-bridge/config.toml
 Restart=always
 RestartSec=10
 TimeoutStopSec=20

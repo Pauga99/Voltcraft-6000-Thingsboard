@@ -9,7 +9,7 @@ Executar `usa_sem6000_thingsboard_mqtt.py` com a servei `systemd`, sense obrir u
 Des de la Raspberry:
 
 ```bash
-cd /home/pau/Codis
+cd /opt/sem6000-bridge
 bash codis/deploy/install_sem6000_bridge.sh
 ```
 
@@ -38,7 +38,7 @@ sudo systemctl start sem6000-bridge
 Abans d'arrencar el servei:
 
 ```bash
-/home/pau/Codis/.venv/bin/python /home/pau/Codis/codis/usa_sem6000_thingsboard_mqtt.py \
+/opt/sem6000-bridge/.venv/bin/python /opt/sem6000-bridge/codis/usa_sem6000_thingsboard_mqtt.py \
   --config /etc/sem6000-bridge/config.toml \
   --check-config
 ```
@@ -72,13 +72,13 @@ sudo systemctl restart sem6000-bridge
 ## 4. Descobrir SEM6000 visibles
 
 ```bash
-/home/pau/Codis/.venv/bin/python /home/pau/Codis/codis/usa_sem6000_thingsboard_mqtt.py --discover
+/opt/sem6000-bridge/.venv/bin/python /opt/sem6000-bridge/codis/usa_sem6000_thingsboard_mqtt.py --discover
 ```
 
 Si uses un adaptador BLE diferent:
 
 ```bash
-/home/pau/Codis/.venv/bin/python /home/pau/Codis/codis/usa_sem6000_thingsboard_mqtt.py \
+/opt/sem6000-bridge/.venv/bin/python /opt/sem6000-bridge/codis/usa_sem6000_thingsboard_mqtt.py \
   --discover \
   --bluetooth-device hci1
 ```

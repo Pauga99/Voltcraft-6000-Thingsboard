@@ -55,12 +55,13 @@ sudo apt install -y git python3 python3-venv python3-pip bluetooth bluez build-e
 
 ## Instal.lacio
 
-1. Clona aquest repo a la Raspberry:
+1. Clona aquest repo a la Raspberry. Els exemples fan servir `/opt/sem6000-bridge`, pero pots triar qualsevol directori:
 
 ```bash
-cd /home/pau
-git clone <URL_DEL_TEU_REPO> Codis
-cd /home/pau/Codis
+sudo mkdir -p /opt/sem6000-bridge
+sudo chown "$USER":"$USER" /opt/sem6000-bridge
+git clone <URL_DEL_REPO> /opt/sem6000-bridge
+cd /opt/sem6000-bridge
 ```
 
 2. Executa l'instal.lador:
@@ -110,7 +111,7 @@ child_device_type = "Voltcraft SEM6000"
 4. Valida la configuracio sense connectar BLE ni MQTT:
 
 ```bash
-/home/pau/Codis/.venv/bin/python /home/pau/Codis/codis/usa_sem6000_thingsboard_mqtt.py \
+/opt/sem6000-bridge/.venv/bin/python /opt/sem6000-bridge/codis/usa_sem6000_thingsboard_mqtt.py \
   --config /etc/sem6000-bridge/config.toml \
   --check-config
 ```
@@ -196,13 +197,13 @@ sudo systemctl restart sem6000-bridge
 ## Descobrir SEM6000 visibles
 
 ```bash
-/home/pau/Codis/.venv/bin/python /home/pau/Codis/codis/usa_sem6000_thingsboard_mqtt.py --discover
+/opt/sem6000-bridge/.venv/bin/python /opt/sem6000-bridge/codis/usa_sem6000_thingsboard_mqtt.py --discover
 ```
 
 Amb un adaptador Bluetooth diferent:
 
 ```bash
-/home/pau/Codis/.venv/bin/python /home/pau/Codis/codis/usa_sem6000_thingsboard_mqtt.py \
+/opt/sem6000-bridge/.venv/bin/python /opt/sem6000-bridge/codis/usa_sem6000_thingsboard_mqtt.py \
   --discover \
   --bluetooth-device hci1
 ```
@@ -255,6 +256,18 @@ codis/deploy/sem6000-bridge.service     Exemple d'unitat systemd
 codis/docs/guia_thingsboard_sem6000.md  Guia de dashboard i RPCs
 codis/tests/                           Tests unitaris
 ```
+
+## Referencies i dependències externes
+
+Aquest projecte utilitza o es basa en aquests projectes:
+
+- Llibreria SEM6000 per Python: [Matthias-pixel/python3-voltcraft-sem6000](https://github.com/Matthias-pixel/python3-voltcraft-sem6000)
+- Documentacio/API original del dispositiu: [Heckie75/voltcraft-sem-6000](https://github.com/Heckie75/voltcraft-sem-6000)
+- Client MQTT Python: [Eclipse Paho MQTT Python](https://github.com/eclipse-paho/paho.mqtt.python)
+- Bluetooth Low Energy a Linux: [bluepy](https://github.com/IanHarvey/bluepy)
+- Plataforma IoT i protocol gateway: [ThingsBoard](https://thingsboard.io/) i [ThingsBoard MQTT Gateway API](https://thingsboard.io/docs/reference/gateway-mqtt-api/)
+
+L'instal.lador baixa `python3-voltcraft-sem6000` dins de `github2/python3-voltcraft-sem6000` si no existeix, i instal.la les dependencies Python necessaries dins del `.venv`.
 
 ## Seguretat
 
